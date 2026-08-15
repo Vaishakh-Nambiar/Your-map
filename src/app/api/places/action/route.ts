@@ -1,20 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { driver } from "@/lib/db";
 
-type Action = "save" | "visit" | "recommend";
+type Action =
+    | "save"
+    | "visit"
+    | "recommend";
 
-export async function POST(request: NextRequest) {
+export async function POST(
+    request: NextRequest
+) {
     try {
-        const body = await request.json();
+        const body =
+            await request.json();
 
         const userId = body.userId;
         const placeId = body.placeId;
-        const action = body.action as Action;
+        const action =
+            body.action as Action;
 
-        if (!userId || !placeId || !action) {
+        if (
+            !userId ||
+            !placeId ||
+            !action
+        ) {
             return NextResponse.json(
                 {
-                    error: "userId, placeId and action are required",
+                    error:
+                        "userId, placeId and action are required",
                 },
                 { status: 400 }
             );
@@ -26,7 +38,10 @@ export async function POST(request: NextRequest) {
             action !== "recommend"
         ) {
             return NextResponse.json(
-                { error: "Invalid action" },
+                {
+                    error:
+                        "Invalid action",
+                },
                 { status: 400 }
             );
         }
@@ -37,43 +52,63 @@ export async function POST(request: NextRequest) {
             recommend: "RECOMMENDED",
         }[action];
 
-        const result = await driver.executeQuery(
-            `
-            MATCH (u:User {id: $userId})
-            MATCH (p:Place {id: $placeId})
+        const result =
+            await driver.executeQuery(
+                `
+                MATCH (u:User {id: $userId})
+                MATCH (p:Place {id: $placeId})
 
-            MERGE (u)-[r:${relationship}]->(p)
+                MERGE (u)-[r:${relationship}]->(p)
 
-            RETURN
-                u.name AS userName,
-                p.name AS placeName
-            `,
-            {
-                userId,
-                placeId,
-            }
-        );
+                RETURN
+                    u.name AS userName,
+                    p.name AS placeName
+                `,
+                {
+                    userId,
+                    placeId,
+                }
+            );
 
-        if (result.records.length === 0) {
+        if (
+            result.records.length ===
+            0
+        ) {
             return NextResponse.json(
-                { error: "User or place not found" },
+                {
+                    error:
+                        "User or place not found",
+                },
                 { status: 404 }
             );
         }
 
-        const record = result.records[0];
+        const record =
+            result.records[0];
 
         return NextResponse.json({
             success: true,
             action,
-            userName: record.get("userName"),
-            placeName: record.get("placeName"),
+            userName:
+                record.get(
+                    "userName"
+                ),
+            placeName:
+                record.get(
+                    "placeName"
+                ),
         });
     } catch (error) {
-        console.error("Place action error:", error);
+        console.error(
+            "Place action error:",
+            error
+        );
 
         return NextResponse.json(
-            { error: "Failed to update place" },
+            {
+                error:
+                    "Failed to update place",
+            },
             { status: 500 }
         );
     }

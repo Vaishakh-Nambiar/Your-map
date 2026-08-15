@@ -5,7 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 // ==================================================
-// RECOMMENDATION DATA USED BY THE MAP
+// RECOMMENDATION DATA
 // ==================================================
 
 type Recommendation = {
@@ -18,6 +18,17 @@ type Recommendation = {
 };
 
 // ==================================================
+// AREA DATA
+// ==================================================
+
+type Area = {
+    id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+};
+
+// ==================================================
 // MAP PROPS
 // ==================================================
 
@@ -27,7 +38,16 @@ type ExploreMapProps = {
     onSelectPlace: (id: string) => void;
     loading: boolean;
     areaId: string;
+
+    // Initial area-selection mode
+    initialOverview: boolean;
+    areas: Area[];
+    onSelectArea: (areaId: string) => void;
 };
+
+// ==================================================
+// COMPONENT
+// ==================================================
 
 export default function ExploreMap({
     recommendations,
@@ -35,6 +55,9 @@ export default function ExploreMap({
     onSelectPlace,
     loading,
     areaId,
+    initialOverview,
+    areas,
+    onSelectArea,
 }: ExploreMapProps) {
     const mapContainer =
         useRef<HTMLDivElement>(null);
@@ -43,6 +66,9 @@ export default function ExploreMap({
         useRef<maplibregl.Map | null>(null);
 
     const markersRef =
+        useRef<maplibregl.Marker[]>([]);
+
+    const areaMarkersRef =
         useRef<maplibregl.Marker[]>([]);
 
     // ==================================================
@@ -54,9 +80,13 @@ export default function ExploreMap({
 
         const map = new maplibregl.Map({
             container: mapContainer.current,
-            style: "https://tiles.openfreemap.org/styles/liberty",
-            center: [77.6389, 12.9116],
-            zoom: 14,
+
+            style:
+                "https://tiles.openfreemap.org/styles/liberty",
+
+            // Start with a wider view showing both areas.
+            center: [77.632, 12.925],
+            zoom: 12.8,
         });
 
         map.addControl(
@@ -75,22 +105,227 @@ export default function ExploreMap({
                 (marker) => marker.remove()
             );
 
+            areaMarkersRef.current.forEach(
+                (marker) => marker.remove()
+            );
+
             map.remove();
+
             mapRef.current = null;
         };
     }, []);
 
     // ==================================================
-    // UPDATE MARKERS
+    // INITIAL AREA OVERVIEW
     //
-    // recommendations becomes [] while loading,
-    // so old markers are immediately removed.
+    // Shows available areas before the user chooses one.
+    //
+    // This intentionally uses lightweight area markers
+    // instead of pretending we have exact administrative
+    // boundary data.
     // ==================================================
 
     useEffect(() => {
         const map = mapRef.current;
 
-        if (!map) return;
+        if (!map || !initialOverview) {
+            // Remove area markers when leaving overview.
+            areaMarkersRef.current.forEach(
+                (marker) => marker.remove()
+            );
+
+            areaMarkersRef.current = [];
+
+            return;
+        }
+
+        function renderAreaOverview(
+            map: maplibregl.Map
+        ) {
+            // Remove previous area markers.
+            areaMarkersRef.current.forEach(
+                (marker) => marker.remove()
+            );
+
+            areaMarkersRef.current = [];
+
+            areas.forEach((area) => {
+                // ==================================================
+                // AREA VISUAL
+                //
+                // Large translucent circle gives the user a
+                // visual indication of the area without requiring
+                // another boundary dataset.
+                // ==================================================
+
+                const element =
+                    document.createElement("div");
+
+                element.style.width = "120px";
+                element.style.height = "120px";
+                element.style.borderRadius = "50%";
+
+                element.style.background =
+                    "rgba(16, 185, 129, 0.16)";
+
+                element.style.border =
+                    "2px solid rgba(16, 185, 129, 0.65)";
+
+                element.style.boxShadow =
+                    "0 4px 20px rgba(0,0,0,0.18)";
+
+                element.style.cursor = "pointer";
+
+                element.style.display = "flex";
+                element.style.alignItems = "center";
+                element.style.justifyContent =
+                    "center";
+
+                element.style.transition =
+                    "all 150ms ease";
+
+                // ==================================================
+                // AREA LABEL
+                // ==================================================
+
+                const label =
+                    document.createElement("div");
+
+                label.innerText = area.name;
+
+                label.style.background =
+                    "rgba(15, 23, 42, 0.92)";
+
+                label.style.color = "white";
+
+                label.style.padding =
+                    "8px 12px";
+
+                label.style.borderRadius =
+                    "999px";
+
+                label.style.fontSize = "13px";
+
+                label.style.fontWeight = "600";
+
+                label.style.whiteSpace =
+                    "nowrap";
+
+                label.style.border =
+                    "1px solid rgba(148,163,184,0.25)";
+
+                label.style.boxShadow =
+                    "0 4px 12px rgba(0,0,0,0.25)";
+
+                element.appendChild(label);
+
+                // ==================================================
+                // HOVER
+                // ==================================================
+
+                element.onmouseenter = () => {
+                    element.style.background =
+                        "rgba(16, 185, 129, 0.28)";
+
+                    element.style.boxShadow =
+                        "0 0 0 6px rgba(16, 185, 129, 0.15), 0 4px 20px rgba(0,0,0,0.25)";
+                };
+
+                element.onmouseleave = () => {
+                    element.style.background =
+                        "rgba(16, 185, 129, 0.16)";
+
+                    element.style.boxShadow =
+                        "0 4px 20px rgba(0,0,0,0.18)";
+                };
+
+                // ==================================================
+                // SELECT AREA
+                // ==================================================
+
+                element.onclick = () => {
+                    onSelectArea(area.id);
+                };
+
+                const marker =
+                    new maplibregl.Marker({
+                        element,
+                        anchor: "center",
+                    })
+                        .setLngLat([
+                            area.longitude,
+                            area.latitude,
+                        ])
+                        .addTo(map);
+
+                areaMarkersRef.current.push(
+                    marker
+                );
+            });
+
+            // ==================================================
+            // FIT BOTH AREAS
+            // ==================================================
+
+            if (areas.length > 1) {
+                const bounds =
+                    new maplibregl.LngLatBounds();
+
+                areas.forEach((area) => {
+                    bounds.extend([
+                        area.longitude,
+                        area.latitude,
+                    ]);
+                });
+
+                map.fitBounds(bounds, {
+                    padding: 120,
+                    maxZoom: 13.5,
+                    duration: 700,
+                });
+            }
+        }
+
+        if (map.loaded()) {
+            renderAreaOverview(map);
+        } else {
+            map.once("load", () =>
+                renderAreaOverview(map)
+            );
+        }
+
+        return () => {
+            areaMarkersRef.current.forEach(
+                (marker) => marker.remove()
+            );
+
+            areaMarkersRef.current = [];
+        };
+    }, [
+        initialOverview,
+        areas,
+        onSelectArea,
+    ]);
+
+    // ==================================================
+    // UPDATE PLACE MARKERS
+    //
+    // recommendations becomes [] while loading,
+    // so old place markers disappear immediately.
+    // ==================================================
+
+    useEffect(() => {
+        const map = mapRef.current;
+
+        if (!map || initialOverview) {
+            markersRef.current.forEach(
+                (marker) => marker.remove()
+            );
+
+            markersRef.current = [];
+
+            return;
+        }
 
         function renderMarkers(
             map: maplibregl.Map
@@ -121,7 +356,8 @@ export default function ExploreMap({
                     ? "34px"
                     : "24px";
 
-                element.style.borderRadius = "50%";
+                element.style.borderRadius =
+                    "50%";
 
                 element.style.backgroundColor =
                     isSelected
@@ -194,6 +430,7 @@ export default function ExploreMap({
         recommendations,
         selectedPlaceId,
         onSelectPlace,
+        initialOverview,
     ]);
 
     // ==================================================
@@ -203,7 +440,13 @@ export default function ExploreMap({
     useEffect(() => {
         const map = mapRef.current;
 
-        if (!map || !selectedPlaceId) return;
+        if (
+            !map ||
+            initialOverview ||
+            !selectedPlaceId
+        ) {
+            return;
+        }
 
         const place = recommendations.find(
             (p) => p.id === selectedPlaceId
@@ -222,37 +465,30 @@ export default function ExploreMap({
     }, [
         selectedPlaceId,
         recommendations,
+        initialOverview,
     ]);
 
     // ==================================================
     // FIT MAP TO CURRENT AREA
     //
-    // When the user switches:
-    //
     // HSR Layout → Koramangala
     //
-    // the new recommendations contain coordinates
-    // from the new area.
-    //
-    // We fit the map to those points so the new
-    // markers are immediately visible.
+    // The new recommendation coordinates are used to
+    // automatically reposition the viewport.
     // ==================================================
 
     useEffect(() => {
         const map = mapRef.current;
 
-        // Don't move the map while the new area is loading.
-        // Wait until the new recommendations arrive.
         if (
             !map ||
+            initialOverview ||
             loading ||
             recommendations.length === 0
         ) {
             return;
         }
 
-        // Calculate bounds around the new area's
-        // currently visible recommendations.
         const bounds =
             new maplibregl.LngLatBounds();
 
@@ -263,8 +499,7 @@ export default function ExploreMap({
             ]);
         });
 
-        // If there is only one valid point,
-        // fly directly to it.
+        // One place.
         if (recommendations.length === 1) {
             const place = recommendations[0];
 
@@ -280,10 +515,7 @@ export default function ExploreMap({
             return;
         }
 
-        // ==================================================
-        // FIT ALL CURRENT RECOMMENDATION MARKERS
-        // ==================================================
-
+        // Multiple places.
         map.fitBounds(bounds, {
             padding: {
                 top: 100,
@@ -303,14 +535,17 @@ export default function ExploreMap({
         areaId,
         recommendations,
         loading,
+        initialOverview,
     ]);
+
+    // ==================================================
+    // RENDER
+    // ==================================================
 
     return (
         <div className="relative h-full w-full">
 
-            {/* ==================================================
-                MAP
-            ================================================== */}
+            {/* MAP */}
 
             <div
                 ref={mapContainer}
@@ -318,8 +553,31 @@ export default function ExploreMap({
             />
 
             {/* ==================================================
+                INITIAL AREA OVERVIEW
+            ================================================== */}
+
+            {initialOverview && (
+                <div className="pointer-events-none absolute left-6 top-6 z-10">
+                    <div className="rounded-2xl border border-slate-700 bg-slate-900/90 px-5 py-4 shadow-xl backdrop-blur">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                            Explore
+                        </p>
+
+                        <p className="mt-1 text-lg font-semibold text-white">
+                            Choose an area
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                            Select an area on the map to
+                            discover places.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================================================
                 LOADING OVERLAY
-                ================================================== */}
+            ================================================== */}
 
             {loading && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/70 backdrop-blur-[2px]">

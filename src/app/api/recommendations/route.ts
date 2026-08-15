@@ -1,52 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { driver } from "@/lib/db";
 import { recommendationQuery } from "@/lib/queries";
-import type { RecommendationMode } from "@/lib/recommendations";
 import {
-    calculateScore,
     buildReasons,
     displayScore,
+    type RecommendationMode,
 } from "@/lib/recommendations";
 
-// ==================================================
-// RECOMMENDATIONS API
-//
-// Flow:
-//
-// CognoDB / Cypher
-//       ↓
-// Graph relationships
-//       ↓
-// TypeScript scoring
-//       ↓
-// Mode-specific 100-point score
-//       ↓
-// Ranked recommendations
-//       ↓
-// UI
-// ==================================================
-
 export async function GET(request: NextRequest) {
-    const { searchParams } =
-        new URL(request.url);
+    const { searchParams } = new URL(request.url);
 
-    const userId =
-        searchParams.get("userId");
-
-    const areaId =
-        searchParams.get("areaId");
+    const userId = searchParams.get("userId");
+    const areaId = searchParams.get("areaId");
 
     // ==================================================
     // RECOMMENDATION MODE
     //
     // for-you  -> personalized
     // friends  -> social graph focused
-    // discover -> exploration focused
+    // discover -> broader exploration
     // ==================================================
 
     const mode =
-        (searchParams.get("mode") ||
-            "for-you") as RecommendationMode;
+        (searchParams.get("mode") || "for-you") as RecommendationMode;
 
     if (
         mode !== "for-you" &&
@@ -73,10 +49,6 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // ==================================================
-        // GET GRAPH SIGNALS
-        // ==================================================
-
         const result =
             await driver.executeQuery(
                 recommendationQuery,
@@ -86,29 +58,12 @@ export async function GET(request: NextRequest) {
                 }
             );
 
-        // ==================================================
-        // SCORE EVERY CANDIDATE
-        //
-        // We score EVERYTHING first.
-        // Then we sort.
-        // Then we take the top 50.
-        //
-        // This prevents an early LIMIT from affecting ranking.
-        // ==================================================
-
         const recommendations =
             result.records.map((record) => {
                 const matchedInterests =
                     record.get(
                         "matchedInterests"
                     ) || [];
-
-                const totalUserInterests =
-                    Number(
-                        record.get(
-                            "totalUserInterests"
-                        ) || 0
-                    );
 
                 const visitors =
                     record.get(
@@ -131,29 +86,48 @@ export async function GET(request: NextRequest) {
                     ) || [];
 
                 const rating =
-                    Number(
-                        record.get(
-                            "rating"
-                        ) || 0
-                    );
+                    record.get("rating") || 0;
 
                 // ==================================================
-                // BOUNDED 100-POINT SCORE
+                // MODE-SPECIFIC RANKING
                 //
-                // 100 is the intentional total of the scoring
-                // categories, not a cap applied afterward.
+                // Same graph signals.
+                // Different importance by mode.
                 // ==================================================
 
-                const scoreBreakdown =
-                    calculateScore(
-                        mode,
-                        matchedInterests,
-                        totalUserInterests,
-                        visitors,
-                        recommenders,
-                        nearbyVisitors,
-                        rating
-                    );
+                let score = 0;
+
+                if (mode === "for-you") {
+                    score =
+                        matchedInterests.length *
+                        25 +
+                        visitors.length * 25 +
+                        recommenders.length *
+                        25 +
+                        nearbyVisitors.length *
+                        15;
+                }
+
+                if (mode === "friends") {
+                    score =
+                        visitors.length * 40 +
+                        recommenders.length *
+                        40 +
+                        nearbyVisitors.length *
+                        20 +
+                        matchedInterests.length *
+                        5;
+                }
+
+                if (mode === "discover") {
+                    score =
+                        Number(rating || 0) *
+                        20 +
+                        nearbyVisitors.length *
+                        5 +
+                        matchedInterests.length *
+                        5;
+                }
 
                 const reasons =
                     buildReasons(
@@ -167,56 +141,32 @@ export async function GET(request: NextRequest) {
 
                 return {
                     id: record.get("id"),
-
-                    name: record.get(
-                        "name"
-                    ),
-
+                    name: record.get("name"),
                     description:
                         record.get(
                             "description"
                         ),
-
                     latitude:
                         record.get(
                             "latitude"
                         ),
-
                     longitude:
                         record.get(
                             "longitude"
                         ),
-
-                    category:
+                    rating:
                         record.get(
-                            "category"
+                            "rating"
                         ),
-
-                    rating,
-
                     priceLevel:
                         record.get(
                             "priceLevel"
                         ),
 
-                    area:
-                        record.get(
-                            "area"
-                        ),
+                    score,
 
-                    // Raw total is already 0-100.
-                    score:
-                        scoreBreakdown.total,
-
-                    // Rounded percentage for UI.
                     displayScore:
-                        displayScore(
-                            scoreBreakdown.total
-                        ),
-
-                    // Useful for debugging,
-                    // README and future explanation UI.
-                    scoreBreakdown,
+                        displayScore(score),
 
                     reasons,
 
@@ -231,26 +181,41 @@ export async function GET(request: NextRequest) {
 
         // ==================================================
         // RANK
-        // Highest recommendation score first.
-        //
-        // Rating is used only as a tie-breaker.
         // ==================================================
 
         recommendations.sort(
             (a, b) =>
-                b.score - a.score ||
-                b.rating - a.rating
+                b.score - a.score
         );
 
         // ==================================================
-        // RETURN TOP CANDIDATES
+        // TOP RESULTS
         //
-        // Frontend still loads only 5 at a time.
-        // API keeps a larger ranked pool available.
+        // Score everything first, then rank, then take
+        // the best results.
         // ==================================================
 
-        const topRecommendations =
+        let topRecommendations =
             recommendations.slice(0, 50);
+
+        // Discover should always have enough places
+        // for exploration.
+        if (mode === "discover") {
+            while (
+                topRecommendations.length <
+                10 &&
+                recommendations.length > 0
+            ) {
+                const next =
+                    recommendations.pop();
+
+                if (!next) break;
+
+                topRecommendations.push(
+                    next
+                );
+            }
+        }
 
         return NextResponse.json(
             topRecommendations
