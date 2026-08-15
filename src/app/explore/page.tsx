@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ExploreMap from "@/components/ExploreMap";
 
@@ -63,6 +63,235 @@ type PlaceActionState = {
     visit: boolean;
     recommend: boolean;
 };
+
+
+type GraphNode = {
+    id: string;
+    label: string;
+    type: "you" | "person" | "place" | "interest";
+    relation?: string;
+    x: number;
+    y: number;
+};
+
+type GraphEdge = {
+    from: string;
+    to: string;
+    label: string;
+    tone?: "green" | "slate";
+};
+
+function NetworkGraph({
+    place,
+    userName,
+    avatarUrl,
+}: {
+    place: Recommendation;
+    userName: string;
+    avatarUrl: (name: string) => string;
+}) {
+    const visitors = place.visitors ?? [];
+    const recommenders = place.recommenders ?? [];
+    const people = Array.from(new Set([...visitors, ...recommenders]));
+    const extraNearby = (place.nearbyVisitors ?? []).filter(
+        (name) => !people.includes(name)
+    );
+
+    const interest = place.matchedInterests[0] ?? "Your interests";
+    const peopleColumns = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(Math.max(people.length, 1)))));
+    const peopleRows = Math.max(1, Math.ceil(people.length / peopleColumns));
+    const peopleWidth = 760;
+    const peopleStartX = 500 - peopleWidth / 2;
+
+    const nodes: GraphNode[] = [
+        { id: "interest", label: interest, type: "interest", x: 500, y: 80 },
+        { id: "place", label: place.name, type: "place", x: 500, y: 340 },
+        { id: "you", label: userName, type: "you", x: 500, y: 620 },
+        ...people.map((name, index) => {
+            const col = index % peopleColumns;
+            const row = Math.floor(index / peopleColumns);
+            const gap = peopleColumns === 1 ? 0 : peopleWidth / (peopleColumns - 1);
+            return {
+                id: `person-${name}`,
+                label: name,
+                type: "person" as const,
+                relation: recommenders.includes(name) ? "RECOMMENDED" : "VISITED",
+                x: peopleColumns === 1 ? 500 : peopleStartX + col * gap,
+                y: 170 + row * 110,
+            };
+        }),
+        ...extraNearby.map((name, index) => ({
+            id: `nearby-${name}`,
+            label: name,
+            type: "person" as const,
+            relation: "NEARBY",
+            x: 180 + (index % 4) * 210,
+            y: 690 + Math.floor(index / 4) * 90,
+        })),
+    ];
+
+    const edges: GraphEdge[] = [
+        { from: "you", to: "interest", label: "LIKES", tone: "green" },
+        { from: "interest", to: "place", label: "MATCHES", tone: "green" },
+        ...people.map((name) => ({
+            from: `person-${name}`,
+            to: "place",
+            label: recommenders.includes(name) ? "RECOMMENDED" : "VISITED",
+            tone: recommenders.includes(name) ? "green" as const : "slate" as const,
+        })),
+        ...people.map((name) => ({
+            from: "you",
+            to: `person-${name}`,
+            label: "FRIEND",
+            tone: "slate" as const,
+        })),
+        ...extraNearby.map((name) => ({
+            from: `nearby-${name}`,
+            to: "place",
+            label: "NEARBY",
+            tone: "slate" as const,
+        })),
+    ];
+
+    const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(
+        Object.fromEntries(nodes.map((node) => [node.id, { x: node.x, y: node.y }]))
+    );
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState<string | null>(null);
+    const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+    const [panning, setPanning] = useState(false);
+    const panStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
+
+    useEffect(() => {
+        setPositions(Object.fromEntries(nodes.map((node) => [node.id, { x: node.x, y: node.y }])));
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+    }, [place.id]);
+
+    const fitView = () => {
+        setZoom(0.82);
+        setPan({ x: 0, y: -20 });
+    };
+
+    const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
+
+    return (
+        <div
+            className="relative mt-5 h-[min(64vh,620px)] min-h-[460px] overflow-hidden rounded-3xl border border-slate-100 bg-slate-50"
+            onWheel={(e) => {
+                e.preventDefault();
+                setZoom((value) => Math.min(1.7, Math.max(0.55, value + (e.deltaY > 0 ? -0.08 : 0.08))));
+            }}
+            onPointerDown={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest?.(".graph-node")) return;
+                setPanning(true);
+                panStart.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+            }}
+            onPointerMove={(e) => {
+                if (!panning) return;
+                setPan({
+                    x: panStart.current.px + e.clientX - panStart.current.x,
+                    y: panStart.current.py + e.clientY - panStart.current.y,
+                });
+            }}
+            onPointerUp={() => setPanning(false)}
+            onPointerLeave={() => setPanning(false)}
+        >
+            <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-sm">
+                <button onClick={() => setZoom((z) => Math.min(1.7, z + 0.12))} className="h-8 w-8 rounded-lg text-sm font-semibold hover:bg-slate-100">+</button>
+                <button onClick={() => setZoom((z) => Math.max(0.55, z - 0.12))} className="h-8 w-8 rounded-lg text-sm font-semibold hover:bg-slate-100">−</button>
+                <button onClick={fitView} className="rounded-lg px-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-100">Fit</button>
+            </div>
+
+            <div
+                className="absolute left-1/2 top-1/2 h-[820px] w-[1100px]"
+                style={{
+                    transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+                    transformOrigin: "center",
+                }}
+            >
+                <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1100 820" fill="none">
+                    {edges.map((edge, index) => {
+                        const from = positions[edge.from] ?? nodeById[edge.from];
+                        const to = positions[edge.to] ?? nodeById[edge.to];
+                        if (!from || !to) return null;
+                        const mx = (from.x + to.x) / 2;
+                        const my = (from.y + to.y) / 2;
+                        return (
+                            <g key={`${edge.from}-${edge.to}-${index}`}>
+                                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={edge.tone === "green" ? "#10b981" : "#94a3b8"} strokeWidth={edge.tone === "green" ? 3 : 2} />
+                                <rect x={mx - 45} y={my - 11} width="90" height="22" rx="11" fill="white" opacity="0.94" />
+                                <text x={mx} y={my + 4} textAnchor="middle" fontSize="9" fontWeight="700" fill={edge.tone === "green" ? "#047857" : "#64748b"}>{edge.label}</text>
+                            </g>
+                        );
+                    })}
+                </svg>
+
+                {nodes.map((node) => {
+                    const pos = positions[node.id] ?? { x: node.x, y: node.y };
+                    const isPlace = node.type === "place";
+                    const isYou = node.type === "you";
+                    return (
+                        <div
+                            key={node.id}
+                            className="graph-node absolute -translate-x-1/2 -translate-y-1/2 cursor-grab select-none active:cursor-grabbing"
+                            style={{ left: pos.x, top: pos.y }}
+                            onPointerDown={(e) => {
+                                e.stopPropagation();
+                                setDragging(node.id);
+                                setDragOffset({ x: e.clientX - pos.x * zoom - pan.x, y: e.clientY - pos.y * zoom - pan.y });
+                                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                            }}
+                            onPointerMove={(e) => {
+                                if (dragging !== node.id) return;
+                                setPositions((current) => ({
+                                    ...current,
+                                    [node.id]: {
+                                        x: (e.clientX - dragOffset.x - pan.x) / zoom,
+                                        y: (e.clientY - dragOffset.y - pan.y) / zoom,
+                                    },
+                                }));
+                            }}
+                            onPointerUp={() => setDragging(null)}
+                        >
+                            {node.type === "interest" ? (
+                                <div className="flex flex-col items-center">
+                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-center shadow-sm">
+                                        <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">YOUR INTEREST</p>
+                                        <p className="mt-0.5 text-sm font-bold text-slate-900">☕ {node.label}</p>
+                                    </div>
+                                </div>
+                            ) : isPlace ? (
+                                <div className="rounded-2xl border-2 border-emerald-400 bg-white px-6 py-4 text-center shadow-xl">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">PLACE</p>
+                                    <p className="mt-1 max-w-[190px] text-sm font-bold text-slate-900">{node.label}</p>
+                                </div>
+                            ) : isYou ? (
+                                <div className="flex flex-col items-center">
+                                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-base font-bold text-white shadow-lg">{node.label.charAt(0).toUpperCase()}</div>
+                                    <p className="mt-1 text-xs font-semibold text-slate-800">{node.label}</p>
+                                    <p className="text-[10px] font-semibold text-emerald-600">YOU</p>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center">
+                                    <img src={avatarUrl(node.label)} alt={node.label} className="h-14 w-14 rounded-full border-2 border-white bg-white object-cover shadow-lg" />
+                                    <p className="mt-1 text-xs font-semibold text-slate-800">{node.label}</p>
+                                    <p className="text-[9px] font-semibold text-slate-400">{node.relation}</p>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="absolute bottom-3 left-3 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-[11px] text-slate-500 shadow-sm">
+                Drag nodes • drag empty space to pan • scroll to zoom
+            </div>
+        </div>
+    );
+}
 
 // ==================================================
 // PAGE
@@ -149,6 +378,12 @@ export default function ExplorePage() {
         setSelectedPlaceId,
     ] = useState<string | null>(null);
 
+    const [selectedPosition, setSelectedPosition] =
+        useState<{ x: number; y: number } | null>(null);
+
+    const [showNetwork, setShowNetwork] = useState(false);
+    const [showHow, setShowHow] = useState(false);
+
     // ==================================================
     // PLACE ACTION STATE
     //
@@ -184,11 +419,10 @@ export default function ExplorePage() {
     // VISIBLE RECOMMENDATIONS
     // ==================================================
 
-    const visibleRecommendations =
-        recommendations.slice(
-            0,
-            visibleCount
-        );
+    const visibleRecommendations = useMemo(
+        () => recommendations.slice(0, visibleCount),
+        [recommendations, visibleCount]
+    );
 
     // ==================================================
     // SELECTED PLACE
@@ -385,6 +619,9 @@ export default function ExplorePage() {
         setRecommendations([]);
         setVisibleCount(5);
         setSelectedPlaceId(null);
+        setSelectedPosition(null);
+        setShowNetwork(false);
+        setShowHow(false);
         setError("");
 
         setAreaId(nextAreaId);
@@ -405,6 +642,9 @@ export default function ExplorePage() {
         setRecommendations([]);
         setVisibleCount(5);
         setSelectedPlaceId(null);
+        setSelectedPosition(null);
+        setShowNetwork(false);
+        setShowHow(false);
         setError("");
 
         setMode(nextMode);
@@ -438,72 +678,90 @@ export default function ExplorePage() {
     // PAGE
     // ==================================================
 
+    const currentArea =
+        areas.find((area) => area.id === areaId);
+
+    const modeLabel = {
+        "for-you": "Recommended for you",
+        friends: "Your friends are into these",
+        discover: "Worth discovering",
+    }[mode];
+
+    const avatarUrl = (name: string) =>
+        `https://api.dicebear.com/9.x/open-peeps/svg?seed=${encodeURIComponent(name)}`;
+
+    const selectedVisitors = selectedPlace?.visitors ?? [];
+
     return (
-        <main className="min-h-screen bg-slate-950 text-white">
+        <main className="relative h-screen overflow-hidden bg-[#eef1ed] text-slate-900">
+            {/* Full-screen map */}
+            <div className="absolute inset-0">
+                <ExploreMap
+                    recommendations={visibleRecommendations}
+                    selectedPlaceId={selectedPlaceId}
+                    onSelectPlace={(placeId) =>
+                        setSelectedPlaceId(placeId)
+                    }
+                    onSelectedPositionChange={setSelectedPosition}
+                    loading={loading}
+                    areaId={areaId}
+                    initialOverview={initialOverview}
+                    areas={areas}
+                    onSelectArea={handleAreaSelect}
+                />
+            </div>
 
-            {/* ==================================================
-                HEADER
-            ================================================== */}
-
-            <header className="border-b border-slate-800">
-                <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-
-                    <div>
-                        <p className="text-sm font-semibold tracking-[0.2em] text-emerald-400">
-                            EXPLORE
-                        </p>
-
-                        <p className="text-xs text-slate-500">
-                            Discover through people and
-                            preferences
-                        </p>
+            {/* Top navigation */}
+            <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between p-4 sm:p-5">
+                <div className="pointer-events-auto flex items-center gap-2">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white/95 text-lg font-bold shadow-lg shadow-slate-900/10 backdrop-blur">
+                        ✦
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex h-11 items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 shadow-lg shadow-slate-900/10 backdrop-blur">
+                        <span className="font-semibold tracking-tight">
+                            Explore
+                        </span>
 
-                        {/* ==================================================
-        DEMO USER SWITCHER
+                        <span className="h-5 w-px bg-slate-200" />
+                        <span className="text-sm text-slate-500">
+                            Discover places around you
+                        </span>
+                    </div>
+                </div>
 
-        This lets the interviewer quickly demonstrate
-        that different users have different graph
-        contexts and therefore different recommendations.
-    ================================================== */}
+                <div className="pointer-events-auto flex items-center gap-2">
+                    <div className="flex items-center rounded-2xl border border-slate-200 bg-white/95 px-1.5 py-1.5 shadow-lg shadow-slate-900/10 backdrop-blur">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-sm font-semibold text-white">
+                            {userName.charAt(0).toUpperCase()}
+                        </span>
 
                         <select
                             value={userId ?? ""}
                             disabled={loading}
                             onChange={(e) => {
-                                const nextUserId =
-                                    e.target.value;
-
-                                const nextUser =
-                                    demoUsers.find(
-                                        (user) =>
-                                            user.id ===
-                                            nextUserId
-                                    );
+                                const nextUserId = e.target.value;
+                                const nextUser = demoUsers.find(
+                                    (user) => user.id === nextUserId
+                                );
 
                                 if (!nextUser) return;
 
-                                // Persist the selected demo user.
                                 localStorage.setItem(
                                     "userId",
                                     nextUser.id
                                 );
 
-                                // Clear stale recommendation state.
                                 setLoading(true);
                                 setRecommendations([]);
                                 setVisibleCount(5);
                                 setSelectedPlaceId(null);
                                 setActionStates({});
                                 setError("");
-
-                                // Update current user.
                                 setUserId(nextUser.id);
                                 setUserName(nextUser.name);
                             }}
-                            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-60"
+                            className="cursor-pointer bg-transparent px-2 text-sm font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {demoUsers.map((user) => (
                                 <option
@@ -517,723 +775,444 @@ export default function ExplorePage() {
 
                         <button
                             onClick={logout}
-                            className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-400 hover:bg-slate-800"
+                            className="mr-1 rounded-xl px-2 py-1.5 text-xs text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            title="Log out"
                         >
-                            Logout
+                            ↗
                         </button>
-
                     </div>
-
                 </div>
             </header>
 
-            <div className="mx-auto max-w-7xl p-6">
-
-                {/* ==================================================
-                    INTRO
-                ================================================== */}
-
-                <div className="mb-6">
-
-                    <h1 className="text-3xl font-bold">
-
-                        {initialOverview
-                            ? "Explore nearby"
-                            : `Explore ${areas.find(
-                                (a) =>
-                                    a.id ===
-                                    areaId
-                            )?.name
-                            }`}
-
-                    </h1>
-
-                    <p className="mt-1 text-slate-400">
-
-                        {initialOverview
-                            ? "Choose an area to discover places recommended for you."
-                            : "Places recommended based on your interests and your network."}
-
-                    </p>
-
-                </div>
-
-                {/* ==================================================
-                    AREA SELECTOR
-                    Hidden until an area has been selected.
-                ================================================== */}
-
-                {!initialOverview && (
-                    <div className="mb-6">
+            {/* Area context */}
+            {!initialOverview && currentArea && (
+                <div className="pointer-events-none absolute left-4 top-[76px] z-20 sm:left-5">
+                    <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg shadow-slate-900/10 backdrop-blur">
+                        <span className="text-sm">📍</span>
+                        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                            Exploring
+                        </span>
 
                         <select
                             value={areaId}
+                            disabled={loading}
                             onChange={(e) =>
-                                handleAreaChange(
-                                    e.target.value
-                                )
+                                handleAreaChange(e.target.value)
                             }
-                            disabled={loading}
-                            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            className="cursor-pointer bg-transparent text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60"
                         >
-
-                            {areas.map(
-                                (area) => (
-                                    <option
-                                        key={area.id}
-                                        value={
-                                            area.id
-                                        }
-                                    >
-                                        {area.name}
-                                    </option>
-                                )
-                            )}
-
+                            {areas.map((area) => (
+                                <option
+                                    key={area.id}
+                                    value={area.id}
+                                >
+                                    {area.name}
+                                </option>
+                            ))}
                         </select>
-
                     </div>
-                )}
+                </div>
+            )}
 
-                {/* ==================================================
-                    DISCOVERY MODES
-                    Only available after choosing an area.
-                ================================================== */}
+            {/* Initial overview prompt */}
+            {initialOverview && (
+                <div className="pointer-events-none absolute bottom-5 left-4 z-20 sm:left-5">
+                    <div className="pointer-events-auto w-[min(390px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-2xl shadow-slate-900/15 backdrop-blur">
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                                📍
+                            </div>
 
-                {!initialOverview && (
-                    <div className="mb-6 flex gap-2 rounded-xl border border-slate-800 bg-slate-900 p-1">
-
-                        <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "for-you"
-                                )
-                            }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "for-you"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            For You
-                        </button>
-
-                        <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "friends"
-                                )
-                            }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "friends"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            Friends
-                        </button>
-
-                        <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "discover"
-                                )
-                            }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "discover"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            Discover
-                        </button>
-
-                    </div>
-                )}
-
-                {/* ==================================================
-                    MAP + RECOMMENDATIONS
-                ================================================== */}
-
-                <div className="grid items-start gap-6 lg:grid-cols-[1.5fr_1fr]">
-
-                    {/* ==================================================
-                        MAP
-                    ================================================== */}
-
-                    <div className="relative h-[600px] overflow-hidden rounded-3xl border border-slate-800">
-
-                        <ExploreMap
-                            recommendations={
-                                visibleRecommendations
-                            }
-                            selectedPlaceId={
-                                selectedPlaceId
-                            }
-                            onSelectPlace={
-                                (placeId) => {
-                                    setSelectedPlaceId(
-                                        placeId
-                                    );
-                                }
-                            }
-                            loading={loading}
-                            areaId={areaId}
-                            initialOverview={
-                                initialOverview
-                            }
-                            areas={areas}
-                            onSelectArea={
-                                handleAreaSelect
-                            }
-                        />
-
-                    </div>
-
-                    {/* ==================================================
-                        RIGHT PANEL
-                    ================================================== */}
-
-                    {initialOverview ? (
-                        <section className="flex h-[600px] items-center">
-
-                            <div className="w-full rounded-3xl border border-slate-800 bg-slate-900 p-8">
-
-                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-600">
                                     Start exploring
                                 </p>
-
-                                <h2 className="mt-3 text-2xl font-bold">
-                                    Pick an area
+                                <h2 className="mt-1 text-lg font-semibold tracking-tight">
+                                    Choose an area
                                 </h2>
-
-                                <p className="mt-2 text-sm leading-6 text-slate-400">
-                                    Choose HSR Layout or
-                                    Koramangala from the
-                                    map to see graph-powered
-                                    recommendations.
+                                <p className="mt-1 text-sm text-slate-500">
+                                    Pick a neighborhood and Explore will
+                                    build recommendations around you.
                                 </p>
-
-                                <div className="mt-6 space-y-3">
-
-                                    {areas.map(
-                                        (area) => (
-                                            <button
-                                                key={
-                                                    area.id
-                                                }
-                                                onClick={() =>
-                                                    handleAreaSelect(
-                                                        area.id
-                                                    )
-                                                }
-                                                className="w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-left transition hover:border-emerald-400 hover:bg-slate-750"
-                                            >
-
-                                                <p className="font-semibold">
-                                                    {
-                                                        area.name
-                                                    }
-                                                </p>
-
-                                                <p className="mt-1 text-xs text-slate-500">
-                                                    Explore
-                                                    personalized
-                                                    places
-                                                </p>
-
-                                            </button>
-                                        )
-                                    )}
-
-                                </div>
-
                             </div>
+                        </div>
 
-                        </section>
-                    ) : (
-                        <section className="h-[600px] overflow-y-auto pr-2">
-
-                            {/* ==================================================
-                                SELECTED PLACE DETAIL
-                            ================================================== */}
-
-                            {selectedPlace ? (
-                                <div className="mb-6 rounded-2xl border border-amber-400/40 bg-slate-900 p-6">
-
-                                    <div className="flex items-start justify-between gap-4">
-
-                                        <div>
-
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-amber-400">
-                                                Selected place
-                                            </p>
-
-                                            <h2 className="mt-1 text-2xl font-bold">
-                                                {
-                                                    selectedPlace.name
-                                                }
-                                            </h2>
-
-                                            <p className="mt-1 text-sm text-slate-400">
-                                                ⭐{" "}
-                                                {
-                                                    selectedPlace.rating
-                                                }
-                                            </p>
-
-                                        </div>
-
-                                        <button
-                                            onClick={() =>
-                                                setSelectedPlaceId(
-                                                    null
-                                                )
-                                            }
-                                            className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-800 hover:text-white"
-                                        >
-                                            ✕
-                                        </button>
-
-                                    </div>
-
-                                    {/* SCORE */}
-
-                                    <div className="mt-4 flex items-center justify-between">
-
-                                        <span className="text-sm text-slate-400">
-                                            Recommendation match
-                                        </span>
-
-                                        <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-400">
-
-                                            {selectedPlace.displayScore ??
-                                                Math.min(
-                                                    selectedPlace.score,
-                                                    100
-                                                )}{" "}
-                                            match
-
-                                        </span>
-
-                                    </div>
-
-                                    {/* DESCRIPTION */}
-
-                                    <p className="mt-4 text-sm leading-6 text-slate-400">
-                                        {
-                                            selectedPlace.description
-                                        }
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            {areas.map((area) => (
+                                <button
+                                    key={area.id}
+                                    onClick={() =>
+                                        handleAreaSelect(area.id)
+                                    }
+                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
+                                >
+                                    <p className="text-sm font-semibold">
+                                        {area.name}
                                     </p>
-
-                                    {/* WHY THIS PLACE */}
-
-                                    <div className="mt-5">
-
-                                        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                            Why this place?
-                                        </p>
-
-                                        <div className="space-y-2">
-
-                                            {selectedPlace.reasons.map(
-                                                (
-                                                    reason
-                                                ) => (
-                                                    <p
-                                                        key={
-                                                            reason
-                                                        }
-                                                        className="text-sm text-slate-300"
-                                                    >
-                                                        <span className="mr-2 text-emerald-400">
-                                                            ✓
-                                                        </span>
-
-                                                        {
-                                                            reason
-                                                        }
-                                                    </p>
-                                                )
-                                            )}
-
-                                        </div>
-
-                                    </div>
-
-                                    {/* FRIEND VISITS */}
-
-                                    {selectedPlace
-                                        .visitors
-                                        .length >
-                                        0 && (
-                                            <div className="mt-5">
-
-                                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                    Friends who visited
-                                                </p>
-
-                                                <p className="text-sm text-slate-300">
-                                                    {selectedPlace.visitors.join(
-                                                        ", "
-                                                    )}
-                                                </p>
-
-                                            </div>
-                                        )}
-
-                                    {/* RECOMMENDERS */}
-
-                                    {selectedPlace
-                                        .recommenders
-                                        .length >
-                                        0 && (
-                                            <div className="mt-4">
-
-                                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                    Recommended by
-                                                </p>
-
-                                                <p className="text-sm text-slate-300">
-                                                    {selectedPlace.recommenders.join(
-                                                        ", "
-                                                    )}
-                                                </p>
-
-                                            </div>
-                                        )}
-
-                                    {/* ==================================================
-                                        ACTIONS
-                                    ================================================== */}
-
-                                    <div className="mt-6 grid grid-cols-3 gap-2">
-
-                                        {/* SAVE */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "save"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.save
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "save"
-                                                ? "Saving..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.save
-                                                    ? "✓ Saved"
-                                                    : "Save"}
-                                        </button>
-
-                                        {/* VISITED */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "visit"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.visit
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "visit"
-                                                ? "Saving..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.visit
-                                                    ? "✓ Visited"
-                                                    : "Visited"}
-                                        </button>
-
-                                        {/* RECOMMEND */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "recommend"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.recommend
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "recommend"
-                                                ? "Sending..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.recommend
-                                                    ? "✓ Recommended"
-                                                    : "Recommend"}
-                                        </button>
-
-                                    </div>
-
-                                </div>
-                            ) : (
-                                <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-
-                                    <p className="text-sm text-slate-400">
-                                        Select a place on the
-                                        map or from the
-                                        recommendations.
+                                    <p className="mt-0.5 text-xs text-slate-400">
+                                        Explore area
                                     </p>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
 
-                                </div>
-                            )}
+            {/* Selected place card — anchored to the selected marker */}
+            {!initialOverview && selectedPlace && selectedPosition && (
+                <aside
+                    className="pointer-events-auto absolute z-40 w-[420px] max-w-[calc(100vw-32px)] rounded-3xl border border-slate-200 bg-white/98 p-5 shadow-2xl shadow-slate-900/20 backdrop-blur"
+                    style={{
+                        left: selectedPosition.x > 680 ? selectedPosition.x - 444 : selectedPosition.x + 28,
+                        top: Math.max(92, Math.min(selectedPosition.y - 190, window.innerHeight - 560)),
+                    }}
+                >
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                                Selected place
+                            </p>
+                            <h2 className="mt-1 truncate text-xl font-semibold tracking-tight">
+                                {selectedPlace.name}
+                            </h2>
+                            <p className="mt-1 text-sm text-slate-500">
+                                ★ {selectedPlace.rating}
+                            </p>
+                        </div>
 
-                            {/* ==================================================
-                                RECOMMENDATION LIST HEADER
-                            ================================================== */}
+                        <button
+                            onClick={() => setSelectedPlaceId(null)}
+                            className="shrink-0 rounded-full border border-slate-200 px-2 py-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                        >
+                            ×
+                        </button>
+                    </div>
 
-                            <div className="mb-4 flex items-center justify-between">
+                    <div className="mt-4 flex items-center justify-between rounded-2xl bg-emerald-50 px-3 py-2.5">
+                        <span className="text-sm font-medium text-slate-600">
+                            Match
+                        </span>
+                        <span className="text-base font-bold text-emerald-700">
+                            {selectedPlace.displayScore ??
+                                Math.min(selectedPlace.score, 100)}%
+                        </span>
+                    </div>
 
-                                <h2 className="text-xl font-semibold">
-                                    Recommended for you
-                                </h2>
+                    <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+                        <p className="text-xs font-semibold text-emerald-800">Why you are seeing this</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">Your interests and social graph make this place relevant to you.</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            {selectedPlace.matchedInterests.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">☕ Interest</span>}
+                            {selectedVisitors.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">👥 {selectedVisitors.length} friend{selectedVisitors.length === 1 ? "" : "s"}</span>}
+                            {selectedPlace.recommenders.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">↗ Recommendation</span>}
+                        </div>
+                    </div>
 
-                                {!loading && (
-                                    <span className="text-sm text-slate-500">
-                                        {
-                                            recommendations.length
-                                        }{" "}
-                                        places
-                                    </span>
-                                )}
+                    <div className="mt-5">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Why this place?
+                        </p>
+                        <div className="mt-2.5 space-y-2">
+                            {selectedPlace.reasons.slice(0, 3).map((reason) => (
+                                <p key={reason} className="text-sm leading-5 text-slate-700">
+                                    <span className="mr-2 text-emerald-500">✓</span>
+                                    {reason}
+                                </p>
+                            ))}
+                        </div>
+                    </div>
 
+                    {selectedVisitors.length > 0 && (
+                        <div className="mt-4 flex items-center gap-2">
+                            <div className="flex -space-x-2">
+                                {selectedVisitors.slice(0, 4).map((name) => (
+                                    <img
+                                        key={name}
+                                        src={avatarUrl(name)}
+                                        alt={name}
+                                        title={name}
+                                        className="h-8 w-8 rounded-full border-2 border-white bg-emerald-50 object-cover"
+                                    />
+                                ))}
                             </div>
-
-                            {/* ==================================================
-                                LOADING
-                            ================================================== */}
-
-                            {loading && (
-                                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
-
-                                    <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-emerald-400" />
-
-                                    <p className="text-sm text-slate-300">
-                                        Finding
-                                        recommendations...
-                                    </p>
-
-                                    <p className="mt-1 text-xs text-slate-500">
-                                        Analyzing your graph
-                                        connections and
-                                        preferences
-                                    </p>
-
-                                </div>
-                            )}
-
-                            {/* ==================================================
-                                ERROR
-                            ================================================== */}
-
-                            {error && (
-                                <div className="rounded-2xl border border-red-900 bg-red-950/30 p-5 text-red-400">
-                                    {error}
-                                </div>
-                            )}
-
-                            {/* ==================================================
-                                EMPTY
-                            ================================================== */}
-
-                            {!loading &&
-                                !error &&
-                                recommendations.length ===
-                                0 && (
-                                    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
-                                        No recommendations
-                                        found.
-                                    </div>
-                                )}
-
-                            {/* ==================================================
-                                RECOMMENDATION CARDS
-                            ================================================== */}
-
-                            {!loading && (
-                                <div className="space-y-4">
-
-                                    {visibleRecommendations.map(
-                                        (item) => {
-                                            const isSelected =
-                                                selectedPlaceId ===
-                                                item.id;
-
-                                            return (
-                                                <article
-                                                    key={
-                                                        item.id
-                                                    }
-                                                    onClick={() =>
-                                                        setSelectedPlaceId(
-                                                            item.id
-                                                        )
-                                                    }
-                                                    className={`cursor-pointer rounded-2xl border p-5 transition ${isSelected
-                                                        ? "border-amber-400 bg-slate-800"
-                                                        : "border-slate-800 bg-slate-900 hover:border-slate-700"
-                                                        }`}
-                                                >
-
-                                                    {/* CARD HEADER */}
-
-                                                    <div className="flex items-start justify-between gap-4">
-
-                                                        <div>
-
-                                                            <h3 className="text-lg font-semibold">
-                                                                {
-                                                                    item.name
-                                                                }
-                                                            </h3>
-
-                                                            <p className="mt-1 text-sm text-slate-400">
-                                                                ⭐{" "}
-                                                                {
-                                                                    item.rating
-                                                                }
-                                                            </p>
-
-                                                        </div>
-
-                                                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-400">
-
-                                                            {item.displayScore ??
-                                                                Math.min(
-                                                                    item.score,
-                                                                    100
-                                                                )}{" "}
-                                                            match
-
-                                                        </span>
-
-                                                    </div>
-
-                                                    {/* DESCRIPTION */}
-
-                                                    <p className="mt-3 text-sm leading-6 text-slate-400">
-                                                        {
-                                                            item.description
-                                                        }
-                                                    </p>
-
-                                                    {/* REASONS */}
-
-                                                    <div className="mt-4">
-
-                                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                            Why this
-                                                            place?
-                                                        </p>
-
-                                                        <div className="space-y-1.5">
-
-                                                            {item.reasons.map(
-                                                                (
-                                                                    reason
-                                                                ) => (
-                                                                    <p
-                                                                        key={
-                                                                            reason
-                                                                        }
-                                                                        className="text-sm text-slate-300"
-                                                                    >
-                                                                        <span className="mr-2 text-emerald-400">
-                                                                            ✓
-                                                                        </span>
-
-                                                                        {
-                                                                            reason
-                                                                        }
-                                                                    </p>
-                                                                )
-                                                            )}
-
-                                                        </div>
-
-                                                    </div>
-
-                                                </article>
-                                            );
-                                        }
-                                    )}
-
-                                    {/* ==================================================
-                                        LOAD 5 MORE
-                                    ================================================== */}
-
-                                    {visibleCount <
-                                        recommendations.length && (
-                                            <button
-                                                onClick={() =>
-                                                    setVisibleCount(
-                                                        (
-                                                            count
-                                                        ) =>
-                                                            Math.min(
-                                                                count +
-                                                                5,
-                                                                recommendations.length
-                                                            )
-                                                    )
-                                                }
-                                                className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 font-medium text-black hover:bg-emerald-400"
-                                            >
-                                                Load 5 more
-                                            </button>
-                                        )}
-
-                                </div>
-                            )}
-
-                        </section>
+                            <span className="text-xs text-slate-500">
+                                {selectedVisitors.length} friend{selectedVisitors.length === 1 ? "" : "s"} visited
+                            </span>
+                        </div>
                     )}
 
-                </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => setShowHow(true)}
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                        >
+                            ⓘ How was this ranked?
+                        </button>
+                        <button
+                            onClick={() => setShowNetwork(true)}
+                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                        >
+                            View connections →
+                        </button>
+                    </div>
 
-            </div>
+                    <div className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4">
+                        {([
+                            ["save", "Save"],
+                            ["visit", "Visited"],
+                            ["recommend", "Recommend"],
+                        ] as const).map(([action, label]) => {
+                            const active = actionStates[selectedPlace.id]?.[action];
+                            return (
+                                <button
+                                    key={action}
+                                    onClick={() => handlePlaceAction(selectedPlace.id, action)}
+                                    disabled={actionLoading !== null}
+                                    title={
+                                        action === "save"
+                                            ? "Save this place for your own future discovery."
+                                            : action === "visit"
+                                                ? "Record a visit. This can become a social recommendation signal."
+                                                : "Recommend this place to friends and create a recommendation relationship."
+                                    }
+                                    className={`rounded-xl border px-2 py-2 text-xs font-medium transition ${active
+                                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                        } disabled:opacity-50`}
+                                >
+                                    {actionLoading?.placeId === selectedPlace.id &&
+                                        actionLoading.action === action
+                                        ? "Saving..."
+                                        : active
+                                            ? `✓ ${label}`
+                                            : label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </aside>
+            )}
+
+            {/* Recommendation tray */}
+            {!initialOverview && (
+                <section className="absolute bottom-5 right-4 top-[76px] z-20 w-[min(360px,calc(100vw-2rem))] sm:right-5">
+                    <div className="h-full overflow-hidden rounded-3xl border border-slate-200 bg-white/96 shadow-2xl shadow-slate-900/15 backdrop-blur">
+                        <div className="flex items-center justify-between px-4 pb-2 pt-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                                    {mode === "for-you"
+                                        ? "✨"
+                                        : mode === "friends"
+                                            ? "👥"
+                                            : "✦"}{" "}
+                                    {modeLabel}
+                                </p>
+                                <p className="mt-0.5 text-xs text-slate-400">
+                                    {recommendations.length} places
+                                </p>
+                            </div>
+
+                            {visibleCount <
+                                recommendations.length && (
+                                    <button
+                                        onClick={() =>
+                                            setVisibleCount((count) =>
+                                                Math.min(
+                                                    count + 5,
+                                                    recommendations.length
+                                                )
+                                            )
+                                        }
+                                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
+                                    >
+                                        More
+                                    </button>
+                                )}
+                        </div>
+
+                        {loading ? (
+                            <div className="px-4 pb-4">
+                                <div className="rounded-2xl bg-slate-50 px-4 py-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-500" />
+                                        <div>
+                                            <p className="text-sm font-medium text-slate-700">
+                                                Finding places...
+                                            </p>
+                                            <p className="mt-0.5 text-xs text-slate-400">
+                                                Analyzing your graph
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : error ? (
+                            <div className="px-4 pb-4">
+                                <div className="rounded-2xl bg-red-50 px-4 py-4 text-sm text-red-600">
+                                    {error}
+                                </div>
+                            </div>
+                        ) : recommendations.length === 0 ? (
+                            <div className="px-4 pb-4">
+                                <div className="rounded-2xl bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                                    No recommendations found.
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="h-[calc(100%-72px)] space-y-2 overflow-y-auto px-3 pb-3">
+                                {visibleRecommendations.map(
+                                    (item) => {
+                                        const score =
+                                            item.displayScore ??
+                                            Math.min(
+                                                item.score,
+                                                100
+                                            );
+
+                                        return (
+                                            <button
+                                                key={item.id}
+                                                onClick={() =>
+                                                    setSelectedPlaceId(
+                                                        item.id
+                                                    )
+                                                }
+                                                className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-sm font-semibold text-slate-900">
+                                                            {item.name}
+                                                        </p>
+                                                        <p className="mt-0.5 text-xs text-slate-500">
+                                                            ★{" "}
+                                                            {item.rating}
+                                                        </p>
+                                                    </div>
+
+                                                    <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                                        {score}% match
+                                                    </span>
+                                                </div>
+
+                                                {item.reasons[0] && (
+                                                    <p className="mt-2 truncate text-xs text-slate-500">
+                                                        <span className="mr-1 text-emerald-500">
+                                                            ✓
+                                                        </span>
+                                                        {item.reasons[0]}
+                                                    </p>
+                                                )}
+                                            </button>
+                                        );
+                                    }
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
+
+            {/* Discovery mode selector */}
+            {!initialOverview && (
+                <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2">
+                    <div className="flex rounded-2xl border border-slate-200 bg-white/96 p-1 shadow-xl shadow-slate-900/10 backdrop-blur">
+                        {(
+                            [
+                                ["for-you", "For You"],
+                                ["friends", "Friends"],
+                                ["discover", "Discover"],
+                            ] as const
+                        ).map(([value, label]) => (
+                            <button
+                                key={value}
+                                onClick={() =>
+                                    handleModeChange(value)
+                                }
+                                disabled={loading}
+                                className={`rounded-xl px-4 py-2 text-xs font-semibold transition ${mode === value
+                                        ? "bg-slate-900 text-white shadow-sm"
+                                        : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                    } disabled:opacity-50`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* How recommendation works */}
+            {showHow && selectedPlace && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 backdrop-blur-[3px]">
+                    <div className="w-[min(620px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">Recommendation logic</p>
+                                <h3 className="mt-1 text-2xl font-semibold tracking-tight">Why {selectedPlace.name}?</h3>
+                                <p className="mt-1 text-sm text-slate-500">A simple view of how your preferences and graph relationships make a place relevant.</p>
+                            </div>
+                            <button onClick={() => setShowHow(false)} className="rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50">×</button>
+                        </div>
+
+                        <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+                            <p className="text-sm font-bold text-slate-900">The recommendation starts with you</p>
+                            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold">
+                                <span className="rounded-xl bg-white px-3 py-2 shadow-sm">{userName}</span>
+                                <span className="text-slate-400">→</span>
+                                <span className="rounded-xl bg-emerald-100 px-3 py-2 text-emerald-800">☕ {selectedPlace.matchedInterests[0] ?? "your interests"}</span>
+                                <span className="text-slate-400">→</span>
+                                <span className="rounded-xl border border-emerald-200 bg-white px-3 py-2">{selectedPlace.name}</span>
+                            </div>
+                            <p className="mt-3 text-xs leading-5 text-slate-600">Then Explore adds context from your social graph — friends who visited or recommended the place, and nearby activity when available.</p>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-2xl bg-white border border-slate-200 p-3">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">1 · Personal fit</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">You like {selectedPlace.matchedInterests[0] ?? "this category"}</p>
+                            </div>
+                            <div className="rounded-2xl bg-white border border-slate-200 p-3">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">2 · Network evidence</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">{selectedVisitors.length || selectedPlace.recommenders.length ? `${selectedVisitors.length + selectedPlace.recommenders.length} social signal${selectedVisitors.length + selectedPlace.recommenders.length === 1 ? "" : "s"}` : "No social signal yet"}</p>
+                            </div>
+                            <div className="rounded-2xl bg-emerald-50 p-3">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">3 · Combined</p>
+                                <p className="mt-1 text-sm font-semibold text-emerald-800">More relevant signals → stronger recommendation</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">In 5 seconds</p>
+                            <p className="mt-1 text-sm leading-6 text-slate-700">You like something → the graph checks what your network does around places → relevant signals are combined → the place is ranked for you.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Interactive graph story */}
+            {showNetwork && selectedPlace && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4 backdrop-blur-[3px]">
+                    <div className="w-[min(980px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">Graph connections</p>
+                                <h3 className="mt-1 text-xl font-semibold">Why {userName} sees {selectedPlace.name}</h3>
+                                <p className="mt-1 text-sm text-slate-500">Read this left-to-right: your interest makes the place relevant, then your social graph adds evidence from friends.</p>
+                            </div>
+                            <button onClick={() => setShowNetwork(false)} className="shrink-0 rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50">×</button>
+                        </div>
+                        <NetworkGraph place={selectedPlace} userName={userName} avatarUrl={avatarUrl} />
+                        <div className="mt-4 grid gap-2 text-center text-xs sm:grid-cols-4">
+                            <div className="rounded-2xl bg-slate-50 p-3"><b>LIKES / MATCHES</b><p className="mt-1 text-slate-500">personal relevance</p></div>
+                            <div className="rounded-2xl bg-slate-50 p-3"><b>FRIEND</b><p className="mt-1 text-slate-500">social relationship</p></div>
+                            <div className="rounded-2xl bg-slate-50 p-3"><b>VISITED</b><p className="mt-1 text-slate-500">place activity</p></div>
+                            <div className="rounded-2xl bg-emerald-50 p-3"><b>RECOMMENDED</b><p className="mt-1 text-slate-500">new graph signal</p></div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </main>
     );
 }
