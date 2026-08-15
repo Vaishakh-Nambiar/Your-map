@@ -7,6 +7,7 @@ import ExploreMap from "@/components/ExploreMap";
 // ==================================================
 // RECOMMENDATION DATA
 // ==================================================
+
 type Recommendation = {
     id: string;
     name: string;
@@ -28,6 +29,7 @@ type Recommendation = {
 // ==================================================
 // AVAILABLE AREAS
 // ==================================================
+
 const areas = [
     {
         id: "area1",
@@ -42,6 +44,7 @@ const areas = [
 // ==================================================
 // PLACE ACTION TYPES
 // ==================================================
+
 type PlaceAction = "save" | "visit" | "recommend";
 
 type PlaceActionState = {
@@ -56,17 +59,20 @@ export default function ExplorePage() {
     // ==================================================
     // USER
     // ==================================================
+
     const [userId, setUserId] = useState<string | null>(null);
     const [userName, setUserName] = useState("");
 
     // ==================================================
     // AREA
     // ==================================================
+
     const [areaId, setAreaId] = useState("area1");
 
     // ==================================================
     // DISCOVERY MODE
     // ==================================================
+
     const [mode, setMode] = useState<
         "for-you" | "friends" | "discover"
     >("for-you");
@@ -74,6 +80,7 @@ export default function ExplorePage() {
     // ==================================================
     // RECOMMENDATIONS
     // ==================================================
+
     const [recommendations, setRecommendations] = useState<
         Recommendation[]
     >([]);
@@ -85,11 +92,13 @@ export default function ExplorePage() {
     // PROGRESSIVE LOADING
     // First 5 places are shown on both the list and map.
     // ==================================================
+
     const [visibleCount, setVisibleCount] = useState(5);
 
     // ==================================================
     // MAP / CARD SELECTION
     // ==================================================
+
     const [selectedPlaceId, setSelectedPlaceId] = useState<
         string | null
     >(null);
@@ -100,6 +109,7 @@ export default function ExplorePage() {
     // Each place has independent Save / Visit /
     // Recommend state. All three can be active together.
     // ==================================================
+
     const [actionLoading, setActionLoading] = useState<{
         placeId: string;
         action: PlaceAction;
@@ -113,28 +123,23 @@ export default function ExplorePage() {
     // VISIBLE RECOMMENDATIONS
     // These are rendered on both the map and list.
     // ==================================================
+
     const visibleRecommendations =
         recommendations.slice(0, visibleCount);
 
     // ==================================================
     // SELECTED PLACE
     // ==================================================
+
     const selectedPlace =
         recommendations.find(
             (place) => place.id === selectedPlaceId
         ) ?? null;
 
     // ==================================================
-    // RESET UI WHEN AREA OR MODE CHANGES
-    // ==================================================
-    useEffect(() => {
-        setVisibleCount(5);
-        setSelectedPlaceId(null);
-    }, [areaId, mode]);
-
-    // ==================================================
     // GET LOGGED-IN USER
     // ==================================================
+
     useEffect(() => {
         const storedUserId = localStorage.getItem("userId");
 
@@ -155,17 +160,26 @@ export default function ExplorePage() {
 
     // ==================================================
     // LOAD RECOMMENDATIONS
+    //
+    // Important:
+    // We clear the previous results BEFORE starting the
+    // request so stale recommendations are never shown
+    // while changing area or discovery mode.
     // ==================================================
+
     useEffect(() => {
         if (!userId) return;
 
         async function loadRecommendations() {
+            // Clear stale UI immediately.
             setLoading(true);
             setError("");
+            setRecommendations([]);
+            setVisibleCount(5);
+            setSelectedPlaceId(null);
 
             try {
                 const response = await fetch(
-                    // `/api/recommendations?userId=${userId}&areaId=${areaId}`
                     `/api/recommendations?userId=${userId}&areaId=${areaId}&mode=${mode}`
                 );
 
@@ -199,6 +213,7 @@ export default function ExplorePage() {
     // A place can have:
     // SAVED + VISITED + RECOMMENDED
     // ==================================================
+
     async function handlePlaceAction(
         placeId: string,
         action: PlaceAction
@@ -259,8 +274,49 @@ export default function ExplorePage() {
     }
 
     // ==================================================
+    // AREA CHANGE
+    //
+    // Clear the old results immediately instead of
+    // waiting for the recommendation request effect.
+    // ==================================================
+
+    function handleAreaChange(
+        nextAreaId: string
+    ) {
+        setLoading(true);
+        setRecommendations([]);
+        setVisibleCount(5);
+        setSelectedPlaceId(null);
+        setError("");
+
+        setAreaId(nextAreaId);
+    }
+
+    // ==================================================
+    // MODE CHANGE
+    //
+    // Same behavior as area switching.
+    // ==================================================
+
+    function handleModeChange(
+        nextMode:
+            | "for-you"
+            | "friends"
+            | "discover"
+    ) {
+        setLoading(true);
+        setRecommendations([]);
+        setVisibleCount(5);
+        setSelectedPlaceId(null);
+        setError("");
+
+        setMode(nextMode);
+    }
+
+    // ==================================================
     // LOGOUT
     // ==================================================
+
     function logout() {
         localStorage.removeItem("userId");
         router.push("/login");
@@ -269,6 +325,7 @@ export default function ExplorePage() {
     // ==================================================
     // WAIT FOR USER
     // ==================================================
+
     if (!userId) {
         return (
             <main className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
@@ -283,8 +340,10 @@ export default function ExplorePage() {
             {/* ==================================================
                 HEADER
             ================================================== */}
+
             <header className="border-b border-slate-800">
                 <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+
                     <div>
                         <p className="text-sm font-semibold tracking-[0.2em] text-emerald-400">
                             EXPLORE
@@ -315,6 +374,7 @@ export default function ExplorePage() {
                 {/* ==================================================
                     INTRO
                 ================================================== */}
+
                 <div className="mb-6">
                     <h1 className="text-3xl font-bold">
                         Explore{" "}
@@ -334,13 +394,17 @@ export default function ExplorePage() {
                 {/* ==================================================
                     AREA SELECTOR
                 ================================================== */}
+
                 <div className="mb-6">
                     <select
                         value={areaId}
                         onChange={(e) =>
-                            setAreaId(e.target.value)
+                            handleAreaChange(
+                                e.target.value
+                            )
                         }
-                        className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm"
+                        disabled={loading}
+                        className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {areas.map((area) => (
                             <option
@@ -354,54 +418,63 @@ export default function ExplorePage() {
                 </div>
 
                 {/* ==================================================
-    DISCOVERY MODES
-
-    These change the recommendation ranking logic.
-================================================== */}
+                    DISCOVERY MODES
+                ================================================== */}
 
                 <div className="mb-6 flex gap-2 rounded-xl border border-slate-800 bg-slate-900 p-1">
 
                     <button
-                        onClick={() => setMode("for-you")}
+                        onClick={() =>
+                            handleModeChange("for-you")
+                        }
+                        disabled={loading}
                         className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "for-you"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                            }`}
+                            ? "bg-emerald-500 text-black"
+                            : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                         For You
                     </button>
 
                     <button
-                        onClick={() => setMode("friends")}
+                        onClick={() =>
+                            handleModeChange("friends")
+                        }
+                        disabled={loading}
                         className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "friends"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                            }`}
+                            ? "bg-emerald-500 text-black"
+                            : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                         Friends
                     </button>
 
                     <button
-                        onClick={() => setMode("discover")}
+                        onClick={() =>
+                            handleModeChange("discover")
+                        }
+                        disabled={loading}
                         className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "discover"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                            }`}
+                            ? "bg-emerald-500 text-black"
+                            : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                         Discover
                     </button>
-
                 </div>
 
                 {/* ==================================================
                     MAP + RECOMMENDATIONS
                 ================================================== */}
+
                 <div className="grid items-start gap-6 lg:grid-cols-[1.5fr_1fr]">
 
                     {/* ==================================================
                         MAP
                     ================================================== */}
-                    <div className="h-[600px] overflow-hidden rounded-3xl border border-slate-800">
+
+                    <div className="relative h-[600px] overflow-hidden rounded-3xl border border-slate-800">
+
                         <ExploreMap
                             recommendations={
                                 visibleRecommendations
@@ -411,24 +484,30 @@ export default function ExplorePage() {
                             }
                             onSelectPlace={
                                 (placeId) => {
-                                    setSelectedPlaceId(placeId);
+                                    setSelectedPlaceId(
+                                        placeId
+                                    );
                                 }
                             }
+                            loading={loading}
+                            areaId={areaId}
                         />
+
                     </div>
 
                     {/* ==================================================
                         RECOMMENDATIONS PANEL
                     ================================================== */}
+
                     <section className="h-[600px] overflow-y-auto pr-2">
 
                         {/* ==================================================
                             SELECTED PLACE DETAIL
                         ================================================== */}
+
                         {selectedPlace ? (
                             <div className="mb-6 rounded-2xl border border-amber-400/40 bg-slate-900 p-6">
 
-                                {/* Selected place header */}
                                 <div className="flex items-start justify-between gap-4">
                                     <div>
                                         <p className="text-xs font-semibold uppercase tracking-wider text-amber-400">
@@ -457,6 +536,7 @@ export default function ExplorePage() {
                                 </div>
 
                                 {/* Recommendation score */}
+
                                 <div className="mt-4 flex items-center justify-between">
                                     <span className="text-sm text-slate-400">
                                         Recommendation match
@@ -473,11 +553,13 @@ export default function ExplorePage() {
                                 </div>
 
                                 {/* Description */}
+
                                 <p className="mt-4 text-sm leading-6 text-slate-400">
                                     {selectedPlace.description}
                                 </p>
 
                                 {/* Why this place? */}
+
                                 <div className="mt-5">
                                     <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-600">
                                         Why this place?
@@ -501,6 +583,7 @@ export default function ExplorePage() {
                                 </div>
 
                                 {/* Friends who visited */}
+
                                 {selectedPlace.visitors.length >
                                     0 && (
                                         <div className="mt-5">
@@ -517,6 +600,7 @@ export default function ExplorePage() {
                                     )}
 
                                 {/* Recommended by */}
+
                                 {selectedPlace.recommenders.length >
                                     0 && (
                                         <div className="mt-4">
@@ -534,11 +618,12 @@ export default function ExplorePage() {
 
                                 {/* ==================================================
                                     SELECTED PLACE ACTIONS
-                                    These write real relationships to the graph.
                                 ================================================== */}
+
                                 <div className="mt-6 grid grid-cols-3 gap-2">
 
                                     {/* SAVE */}
+
                                     <button
                                         onClick={() =>
                                             handlePlaceAction(
@@ -569,6 +654,7 @@ export default function ExplorePage() {
                                     </button>
 
                                     {/* VISITED */}
+
                                     <button
                                         onClick={() =>
                                             handlePlaceAction(
@@ -599,6 +685,7 @@ export default function ExplorePage() {
                                     </button>
 
                                     {/* RECOMMEND */}
+
                                     <button
                                         onClick={() =>
                                             handlePlaceAction(
@@ -631,7 +718,6 @@ export default function ExplorePage() {
                                 </div>
                             </div>
                         ) : (
-                            /* No selected place */
                             <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
                                 <p className="text-sm text-slate-400">
                                     Select a place on the map
@@ -643,6 +729,7 @@ export default function ExplorePage() {
                         {/* ==================================================
                             RECOMMENDATION LIST HEADER
                         ================================================== */}
+
                         <div className="mb-4 flex items-center justify-between">
                             <h2 className="text-xl font-semibold">
                                 Recommended for you
@@ -658,15 +745,27 @@ export default function ExplorePage() {
                         {/* ==================================================
                             LOADING
                         ================================================== */}
+
                         {loading && (
-                            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
-                                Finding places for you...
+                            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+
+                                <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-emerald-400" />
+
+                                <p className="text-sm text-slate-300">
+                                    Finding recommendations...
+                                </p>
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                    Analyzing your graph connections and preferences
+                                </p>
+
                             </div>
                         )}
 
                         {/* ==================================================
                             ERROR
                         ================================================== */}
+
                         {error && (
                             <div className="rounded-2xl border border-red-900 bg-red-950/30 p-5 text-red-400">
                                 {error}
@@ -676,6 +775,7 @@ export default function ExplorePage() {
                         {/* ==================================================
                             EMPTY STATE
                         ================================================== */}
+
                         {!loading &&
                             !error &&
                             recommendations.length === 0 && (
@@ -687,107 +787,120 @@ export default function ExplorePage() {
                         {/* ==================================================
                             RECOMMENDATION CARDS
                         ================================================== */}
-                        <div className="space-y-4">
 
-                            {visibleRecommendations.map(
-                                (item) => {
-                                    const isSelected =
-                                        selectedPlaceId ===
-                                        item.id;
+                        {!loading && (
+                            <div className="space-y-4">
 
-                                    return (
-                                        <article
-                                            key={item.id}
-                                            onClick={() => {
-                                                setSelectedPlaceId(
-                                                    item.id
-                                                );
-                                            }}
-                                            className={`cursor-pointer rounded-2xl border p-5 transition ${isSelected
-                                                ? "border-amber-400 bg-slate-800"
-                                                : "border-slate-800 bg-slate-900 hover:border-slate-700"
-                                                }`}
-                                        >
+                                {visibleRecommendations.map(
+                                    (item) => {
+                                        const isSelected =
+                                            selectedPlaceId ===
+                                            item.id;
 
-                                            {/* Card header */}
-                                            <div className="flex items-start justify-between gap-4">
-                                                <div>
-                                                    <h3 className="text-lg font-semibold">
-                                                        {item.name}
-                                                    </h3>
+                                        return (
+                                            <article
+                                                key={item.id}
+                                                onClick={() => {
+                                                    setSelectedPlaceId(
+                                                        item.id
+                                                    );
+                                                }}
+                                                className={`cursor-pointer rounded-2xl border p-5 transition ${isSelected
+                                                    ? "border-amber-400 bg-slate-800"
+                                                    : "border-slate-800 bg-slate-900 hover:border-slate-700"
+                                                    }`}
+                                            >
 
-                                                    <p className="mt-1 text-sm text-slate-400">
-                                                        ⭐ {item.rating}
-                                                    </p>
+                                                {/* Card header */}
+
+                                                <div className="flex items-start justify-between gap-4">
+
+                                                    <div>
+                                                        <h3 className="text-lg font-semibold">
+                                                            {item.name}
+                                                        </h3>
+
+                                                        <p className="mt-1 text-sm text-slate-400">
+                                                            ⭐ {item.rating}
+                                                        </p>
+                                                    </div>
+
+                                                    {/* Recommendation score */}
+
+                                                    <span className="shrink-0 rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-400">
+                                                        {item.displayScore ??
+                                                            Math.min(
+                                                                item.score,
+                                                                100
+                                                            )}{" "}
+                                                        match
+                                                    </span>
+
                                                 </div>
 
-                                                {/* Recommendation score */}
-                                                <span className="shrink-0 rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-400">
-                                                    {item.displayScore ??
-                                                        Math.min(
-                                                            item.score,
-                                                            100
-                                                        )}{" "}
-                                                    match
-                                                </span>
-                                            </div>
+                                                {/* Description */}
 
-                                            {/* Description */}
-                                            <p className="mt-3 text-sm leading-6 text-slate-400">
-                                                {item.description}
-                                            </p>
-
-                                            {/* Why this place? */}
-                                            <div className="mt-4">
-                                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                    Why this place?
+                                                <p className="mt-3 text-sm leading-6 text-slate-400">
+                                                    {item.description}
                                                 </p>
 
-                                                <div className="space-y-1.5">
-                                                    {item.reasons.map(
-                                                        (reason) => (
-                                                            <p
-                                                                key={reason}
-                                                                className="text-sm text-slate-300"
-                                                            >
-                                                                <span className="mr-2 text-emerald-400">
-                                                                    ✓
-                                                                </span>
+                                                {/* Why this place? */}
 
-                                                                {reason}
-                                                            </p>
-                                                        )
-                                                    )}
+                                                <div className="mt-4">
+                                                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                                        Why this place?
+                                                    </p>
+
+                                                    <div className="space-y-1.5">
+                                                        {item.reasons.map(
+                                                            (reason) => (
+                                                                <p
+                                                                    key={
+                                                                        reason
+                                                                    }
+                                                                    className="text-sm text-slate-300"
+                                                                >
+                                                                    <span className="mr-2 text-emerald-400">
+                                                                        ✓
+                                                                    </span>
+
+                                                                    {reason}
+                                                                </p>
+                                                            )
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
 
-                                        </article>
-                                    );
-                                }
-                            )}
-
-                            {/* ==================================================
-                                LOAD 5 MORE
-                            ================================================== */}
-                            {visibleCount <
-                                recommendations.length && (
-                                    <button
-                                        onClick={() =>
-                                            setVisibleCount(
-                                                (count) =>
-                                                    Math.min(
-                                                        count + 5,
-                                                        recommendations.length
-                                                    )
-                                            )
-                                        }
-                                        className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 font-medium text-black hover:bg-emerald-400"
-                                    >
-                                        Load 5 more
-                                    </button>
+                                            </article>
+                                        );
+                                    }
                                 )}
 
-                        </div>
+                                {/* ==================================================
+                                    LOAD 5 MORE
+                                ================================================== */}
+
+                                {visibleCount <
+                                    recommendations.length && (
+                                        <button
+                                            onClick={() =>
+                                                setVisibleCount(
+                                                    (count) =>
+                                                        Math.min(
+                                                            count + 5,
+                                                            recommendations.length
+                                                        )
+                                                )
+                                            }
+                                            className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 font-medium text-black hover:bg-emerald-400"
+                                        >
+                                            Load 5 more
+                                        </button>
+                                    )}
+
+                            </div>
+                        )}
+
                     </section>
                 </div>
             </div>
