@@ -2,7 +2,32 @@
 
 > A map-first place discovery app where your social graph and interests drive every recommendation.
 
-**Live demo:** _[https://map-graph-9bixsmdic-vaishakhnambiars-projects.vercel.app/explore](https://map-graph-9bixsmdic-vaishakhnambiars-projects.vercel.app/explore)_
+**Live demo:** [https://your-map.vercel.app/login](https://your-map.vercel.app/login)
+
+---
+
+## ⚡ Reviewer Quick Start (3-Minute Demo Flow)
+
+### What you're about to see
+
+**Explore is a graph-powered local discovery app.** Instead of recommending places based only on global popularity or raw proximity, it connects a user's interests, friend connections, visits, recommendations, and geographic context to decide which places are worth showing.
+
+The demo is designed to make one key concept visible: **a graph mutation made by one user changes what another connected user sees.** You will view Arjun's recommendations, perform an explicit recommendation action (writing a relationship to the live graph), and then switch to Rahul to watch that relationship propagate into Rahul's recommendation context.
+
+The interactive graph view then lets you inspect **why that place became relevant**, rather than treating the recommendation engine as a black box.
+
+### 3-Minute Demo Steps
+
+1. **Access the App:** Open the [Live Demo](https://your-map.vercel.app/login).
+2. **Log In as Arjun:** Select **Arjun** from the demo user cards. Note his profile: he likes **Coffee** and is connected to **Rahul**.
+3. **Select HSR Layout:** Click **HSR Layout** on the map to load recommendations.
+4. **Inspect "For You":** Look at the recommendation tray. Places are ranked using Arjun's interests together with signals from his social graph and nearby activity.
+5. **Mutate the Graph (Recommend):** Select a place card, open its details, and click the **Recommend** button. This instantly creates a `(User)-[:RECOMMENDED]->(Place)` relationship in the live CognoDB instance.
+6. **Check Live Social Propagation:**
+   * Switch user to **Rahul** (from the top-right header profile or by returning to `/login`).
+   * Select **HSR Layout** and inspect his **For You** or **Friends** recommendations.
+   * Observe that the exact place Arjun recommended now ranks higher in Rahul's feed with the social signal: **"Arjun recommended this place"**.
+7. **Inspect Graph Explanation:** Click **"View graph connections"** on that recommendation card to see the interactive, live graph visualization of the nodes and relationships that produced the recommendation.
 
 ---
 
@@ -61,7 +86,7 @@ This is a live graph mutation becoming future recommendation context. Not a data
 | 👥 Social graph | Friends' visits and recommendations influence your results |
 | ❤️ Interest matching | Interests align with real place attributes from OSM data |
 | 🔍 Three discovery modes | *For You*, *Friends*, and *Discover* — same graph, different scoring weights |
-| 🔗 Explainable graph | Every recommendation opens an interactive graph showing exactly which relationships drove it |
+| 🔗 Explainable graph | Every recommendation can open an interactive graph showing the relevant relationships and signals behind it. |
 | 💾 Live graph mutations | Save, Visit, and Recommend write relationships to the graph. Visit and Recommend affect future recommendation signals |
 | 👤 Multi-user demo | Switch between users to see how the same area looks through different social contexts |
 | 📊 Progressive loading | Recommendations load 5 at a time — no map overload |
@@ -544,7 +569,7 @@ The Wexa AI assignment specifies explicit requirements. This table maps each one
 | Multi-hop Cypher (2+ hops required) | Multiple multi-hop traversals including User → Friend → Place → Area → Nearby Area |
 | Parameterized queries, no string concatenation | `$userId`, `$areaId` parameters; no template literal Cypher |
 | Environment-based credentials | `COGNO_DB_URI`, `COGNO_DB_USERNAME`, `COGNO_DB_PWD` — never in browser |
-| Working hosted application | _[Live Demo Link](https://map-graph-9bixsmdic-vaishakhnambiars-projects.vercel.app/explore)_ |
+| Working hosted application | _[Live Demo Link](https://your-map.vercel.app/login)_ |
 | Source code in repository | Full source — queries, scoring, seed scripts, all included |
 | Data-loading scripts | `scripts/seed-social.ts`, `scripts/ingest-osm.ts` |
 | README with setup/run instructions | This document |
