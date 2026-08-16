@@ -1482,18 +1482,23 @@ export default function ExplorePage() {
             }
 
             return `${names
-                .slice(
-                    0,
-                    -1
-                )
-                .join(
-                    ", "
-                )}, and ${names[
-                names.length -
-                1
+                .slice(0, -1)
+                .join(", ")}, and ${
+                names[
+                    names.length - 1
                 ]
-                }`;
+            }`;
         };
+
+        // ==================================================
+        // DISCOVER
+        //
+        // Discover is about finding places that are new
+        // and worth exploring in the selected area.
+        //
+        // Nearby friends are only supporting context.
+        // They are NOT presented as the reason to visit.
+        // ==================================================
 
         if (
             mode ===
@@ -1510,31 +1515,31 @@ export default function ExplorePage() {
                 nearby,
 
                 conclusion:
-                    nearby.length
-                        ? `${nearby.length} friend${nearby.length ===
-                            1
-                            ? " is"
-                            : "s are"
-                        } active nearby`
-                        : "A new place to explore",
+                    "Worth discovering",
 
                 detail:
                     nearby.length
-                        ? `${joinNames(
-                            nearby.slice(
-                                0,
-                                3
-                            )
-                        )} ${nearby.length ===
+                        ? `New place in ${
+                            currentArea?.name ??
+                            "this area"
+                        } · ${
+                            nearby.length
+                        } friend${
+                            nearby.length ===
                             1
-                            ? "is"
-                            : "are"
-                        } active nearby.`
-                        : `New place in ${currentArea?.name ??
-                        "this area"
+                                ? ""
+                                : "s"
+                        } nearby`
+                        : `New place in ${
+                            currentArea?.name ??
+                            "this area"
                         }.`,
             };
         }
+
+        // ==================================================
+        // FRIENDS
+        // ==================================================
 
         if (
             mode ===
@@ -1559,8 +1564,8 @@ export default function ExplorePage() {
 
                 detail:
                     both.length ||
-                        onlyRecommended.length ||
-                        onlyVisited.length
+                    onlyRecommended.length ||
+                    onlyVisited.length
                         ? [
                             both.length
                                 ? `${joinNames(
@@ -1597,6 +1602,10 @@ export default function ExplorePage() {
             };
         }
 
+        // ==================================================
+        // FOR YOU
+        // ==================================================
+
         return {
             kind:
                 "for-you" as const,
@@ -1609,7 +1618,7 @@ export default function ExplorePage() {
 
             conclusion:
                 interest &&
-                    socialPeople.length
+                socialPeople.length
                     ? "Strong match for you"
                     : interest
                         ? "Matches what you like"
@@ -1643,8 +1652,8 @@ export default function ExplorePage() {
                     : "",
 
                 !interest &&
-                    !socialPeople.length &&
-                    nearby.length
+                !socialPeople.length &&
+                nearby.length
                     ? `${joinNames(
                         nearby.slice(
                             0,
@@ -2036,26 +2045,7 @@ export default function ExplorePage() {
 
                         </div>
 
-                        {/* Match score */}
 
-                        <div className="mt-4 flex items-center justify-between rounded-2xl bg-emerald-50 px-3 py-2.5">
-
-                            <span className="text-sm font-medium text-slate-600">
-                                Match
-                            </span>
-
-                            <span className="text-base font-bold text-emerald-700">
-                                {
-                                    selectedPlace.displayScore ??
-                                    Math.min(
-                                        selectedPlace.score,
-                                        100
-                                    )
-                                }
-                                %
-                            </span>
-
-                        </div>
 
                         {/* ==================================================
                             EXPLANATION
@@ -2325,64 +2315,47 @@ export default function ExplorePage() {
                 RECOMMENDATION TRAY
             ================================================== */}
 
+            {/* ==================================================
+                RECOMMENDATION TRAY
+            ================================================== */}
+
             {!initialOverview && (
                 <section className="absolute bottom-5 right-4 top-[76px] z-20 w-[min(360px,calc(100vw-2rem))] sm:right-5">
 
                     <div className="h-full overflow-hidden rounded-3xl border border-slate-200 bg-white/96 shadow-2xl shadow-slate-900/15 backdrop-blur">
 
-                        <div className="flex items-center justify-between px-4 pb-2 pt-4">
+                        {/* ==============================
+                            TRAY HEADER
+                        ============================== */}
 
-                            <div>
+                        <div className="px-4 pb-3 pt-4">
 
-                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
 
-                                    {mode ===
-                                        "for-you"
-                                        ? "✨"
-                                        : mode ===
-                                            "friends"
-                                            ? "👥"
-                                            : "✦"}{" "}
+                                {mode ===
+                                    "for-you"
+                                    ? "✨"
+                                    : mode ===
+                                        "friends"
+                                        ? "👥"
+                                        : "✦"}{" "}
 
-                                    {
-                                        modeLabel
-                                    }
+                                {modeLabel}
 
-                                </p>
+                            </p>
 
-                                <p className="mt-0.5 text-xs text-slate-400">
-                                    {
-                                        recommendations.length
-                                    }{" "}
-                                    places
-                                </p>
-
-                            </div>
-
-                            {visibleCount <
-                                recommendations.length && (
-                                    <button
-                                        onClick={() =>
-                                            setVisibleCount(
-                                                (
-                                                    count
-                                                ) =>
-                                                    Math.min(
-                                                        count +
-                                                        5,
-                                                        recommendations.length
-                                                    )
-                                            )
-                                        }
-                                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
-                                    >
-                                        More
-                                    </button>
-                                )}
+                            <p className="mt-0.5 text-xs text-slate-400">
+                                {recommendations.length} places
+                            </p>
 
                         </div>
 
+                        {/* ==============================
+                            CONTENT
+                        ============================== */}
+
                         {loading ? (
+
                             <div className="px-4 pb-4">
 
                                 <div className="rounded-2xl bg-slate-50 px-4 py-5">
@@ -2406,19 +2379,22 @@ export default function ExplorePage() {
                                     </div>
 
                                 </div>
+
                             </div>
+
                         ) : error ? (
+
                             <div className="px-4 pb-4">
 
                                 <div className="rounded-2xl bg-red-50 px-4 py-4 text-sm text-red-600">
-                                    {
-                                        error
-                                    }
+                                    {error}
                                 </div>
 
                             </div>
+
                         ) : recommendations.length ===
                             0 ? (
+
                             <div className="px-4 pb-4">
 
                                 <div className="rounded-2xl bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
@@ -2426,90 +2402,97 @@ export default function ExplorePage() {
                                 </div>
 
                             </div>
+
                         ) : (
-                            <div className="h-[calc(100%-72px)] space-y-2 overflow-y-auto px-3 pb-3">
 
-                                {visibleRecommendations.map(
-                                    (
-                                        item
-                                    ) => {
-                                        const score =
-                                            item.displayScore ??
-                                            Math.min(
-                                                item.score,
-                                                100
-                                            );
+                            <div className="flex h-[calc(100%-72px)] flex-col">
 
-                                        const story =
-                                            getStory(
-                                                item
-                                            );
+                                {/* ==============================
+                                    PLACE LIST
+                                ============================== */}
 
-                                        const storyPeople =
-                                            story.socialPeople.slice(
-                                                0,
-                                                4
-                                            );
+                                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3">
 
-                                        return (
-                                            <button
-                                                key={
-                                                    item.id
-                                                }
-                                                onClick={() =>
-                                                    setSelectedPlaceId(
+                                    {visibleRecommendations.map(
+                                        (
+                                            item
+                                        ) => {
+
+                                            const story =
+                                                getStory(
+                                                    item
+                                                );
+
+                                            const storyPeople =
+                                                story.socialPeople.slice(
+                                                    0,
+                                                    4
+                                                );
+
+                                            return (
+                                                <button
+                                                    key={
                                                         item.id
-                                                    )
-                                                }
-                                                className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
-                                            >
+                                                    }
+                                                    onClick={() =>
+                                                        setSelectedPlaceId(
+                                                            item.id
+                                                        )
+                                                    }
+                                                    className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
+                                                >
 
-                                                <div className="flex items-start justify-between gap-3">
+                                                    {/* PLACE NAME */}
 
-                                                    <div className="min-w-0">
+                                                    <div className="flex items-start justify-between gap-3">
 
-                                                        <p className="truncate text-sm font-semibold text-slate-900">
-                                                            {
-                                                                item.name
-                                                            }
-                                                        </p>
+                                                        <div className="min-w-0">
+
+                                                            <p className="truncate text-sm font-semibold text-slate-900">
+                                                                {
+                                                                    item.name
+                                                                }
+                                                            </p>
+
+                                                        </div>
 
                                                     </div>
 
-                                                    <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                                                        {
-                                                            score
-                                                        }%
-                                                        match
-                                                    </span>
+                                                    {/* ==============================
+                                                        VISUAL EXPLANATION
+                                                    ============================== */}
 
-                                                </div>
+                                                    <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
 
-                                                {/* Explanation */}
+                                                        <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-700">
 
-                                                <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                                                            {/* INTEREST */}
 
-                                                    <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-700">
+                                                            {story.interest &&
+                                                                story.kind ===
+                                                                    "for-you" && (
 
-                                                        {story.interest &&
-                                                            story.kind ===
-                                                            "for-you" && (
-                                                                <span className="rounded-full bg-white px-2 py-1">
-                                                                    ☕{" "}
-                                                                    {
-                                                                        story.interest
-                                                                    }
-                                                                </span>
-                                                            )}
+                                                                    <span className="rounded-full bg-white px-2 py-1">
+                                                                        ☕{" "}
+                                                                        {
+                                                                            story.interest
+                                                                        }
+                                                                    </span>
 
-                                                        {storyPeople.length >
-                                                            0 && (
+                                                                )}
+
+                                                            {/* FRIEND AVATARS */}
+
+                                                            {storyPeople.length >
+                                                                0 && (
+
                                                                 <div className="flex -space-x-2">
 
                                                                     {storyPeople.map(
                                                                         (
                                                                             name
                                                                         ) => (
+
                                                                             <img
                                                                                 key={
                                                                                     name
@@ -2525,61 +2508,128 @@ export default function ExplorePage() {
                                                                                 }
                                                                                 className="h-7 w-7 rounded-full border-2 border-white bg-emerald-50 object-cover"
                                                                             />
+
                                                                         )
                                                                     )}
 
                                                                 </div>
+
                                                             )}
 
-                                                        {story.nearby.length >
-                                                            0 &&
-                                                            !storyPeople.length && (
-                                                                <span className="rounded-full bg-white px-2 py-1">
-                                                                    📍{" "}
-                                                                    {
-                                                                        story
-                                                                            .nearby
-                                                                            .length
-                                                                    }{" "}
-                                                                    nearby
-                                                                </span>
-                                                            )}
+                                                            {/* DISCOVER AREA */}
+
+                                                            {story.kind ===
+                                                                "discover" &&
+                                                                !storyPeople.length && (
+
+                                                                    <span className="rounded-full bg-white px-2 py-1">
+                                                                        📍{" "}
+                                                                        {
+                                                                            currentArea?.name ??
+                                                                            "This area"
+                                                                        }
+                                                                    </span>
+
+                                                                )}
+
+                                                            {/* DISCOVER NEARBY */}
+
+                                                            {story.kind ===
+                                                                "discover" &&
+                                                                story.nearby.length >
+                                                                    0 && (
+
+                                                                    <span className="rounded-full bg-white px-2 py-1 text-slate-500">
+                                                                        👥{" "}
+                                                                        {
+                                                                            story.nearby.length
+                                                                        }{" "}
+                                                                        nearby
+                                                                    </span>
+
+                                                                )}
+
+                                                        </div>
+
+                                                        {/* HUMAN EXPLANATION */}
+
+                                                        {story.detail && (
+
+                                                            <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-slate-500">
+                                                                {
+                                                                    story.detail
+                                                                }
+                                                            </p>
+
+                                                        )}
 
                                                     </div>
 
-                                                    {story.detail && (
-                                                        <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-slate-500">
+                                                    {/* CONCLUSION */}
+
+                                                    <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700">
+
+                                                        <span>
+                                                            →
+                                                        </span>
+
+                                                        <span>
                                                             {
-                                                                story.detail
+                                                                story.conclusion
                                                             }
-                                                        </p>
-                                                    )}
+                                                        </span>
 
-                                                </div>
+                                                    </div>
 
-                                                <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                                                </button>
+                                            );
+                                        }
+                                    )}
 
-                                                    <span>
-                                                        →
-                                                    </span>
+                                </div>
 
-                                                    <span>
-                                                        {
-                                                            story.conclusion
-                                                        }
-                                                    </span>
+                                {/* ==============================
+                                    SHOW MORE
+                                ============================== */}
 
-                                                </div>
+                                {visibleCount <
+                                    recommendations.length && (
 
-                                            </button>
-                                        );
-                                    }
+                                    <div className="shrink-0 px-3 pb-3 pt-3">
+
+                                        <button
+                                            onClick={() =>
+                                                setVisibleCount(
+                                                    (
+                                                        count
+                                                    ) =>
+                                                        Math.min(
+                                                            count +
+                                                                5,
+                                                            recommendations.length
+                                                        )
+                                                )
+                                            }
+                                            className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                                        >
+
+                                            Show more
+                                            <span className="ml-1">
+                                                →
+                                            </span>
+
+                                        </button>
+
+                                    </div>
+
                                 )}
 
                             </div>
+
                         )}
 
                     </div>
+
                 </section>
             )}
 
