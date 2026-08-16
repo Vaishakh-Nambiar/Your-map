@@ -44,11 +44,11 @@ These are relationship traversals. A graph database makes them natural to expres
 
 ## The Demo
 
-Four users — **Arjun, Rahul, Priya, Aisha** — each have a different social graph, different interests, and different visit history. Same area, same map, completely different recommendation context.
+Four demo users — **Arjun, Rahul, Priya, Aisha** — each have a different social graph, different interests, and different visit history. The graph contains 10 users in total; four are exposed in the UI for convenient demonstration. Same area, same map, completely different recommendation context.
 
 **The key demo moment:** Recommend a place as Arjun → switch to Rahul (who is connected to Arjun) → see Arjun's recommendation appear as a social signal in Rahul's results.
 
-This is a live graph mutation becoming future recommendation context. Not a database write that disappears into a void — a relationship that propagates through the graph.
+This is a live graph mutation becoming future recommendation context. Not a database write that disappears into a void — a relationship that propagates through the graph and changes what another user sees.
 
 ---
 
@@ -56,13 +56,13 @@ This is a live graph mutation becoming future recommendation context. Not a data
 
 | Feature | Description |
 |---|---|
-| 🗺️ Map-first UX | The map is the primary surface. Recommendations appear in spatial context |
+| 🗺️ Map-first UX | The map is not a background visualization — it is the primary interaction surface. Selecting a recommendation flies the map to the place, and selecting a marker opens its graph-backed explanation. |
 | 📍 834 real places | Actual OpenStreetMap data from HSR Layout and Koramangala, Bangalore |
 | 👥 Social graph | Friends' visits and recommendations influence your results |
 | ❤️ Interest matching | Interests align with real place attributes from OSM data |
 | 🔍 Three discovery modes | *For You*, *Friends*, and *Discover* — same graph, different scoring weights |
 | 🔗 Explainable graph | Every recommendation opens an interactive graph showing exactly which relationships drove it |
-| 💾 Live graph mutations | Save, Visit, and Recommend a place — this writes to the graph and affects future recommendations |
+| 💾 Live graph mutations | Save, Visit, and Recommend write relationships to the graph. Visit and Recommend affect future recommendation signals |
 | 👤 Multi-user demo | Switch between users to see how the same area looks through different social contexts |
 | 📊 Progressive loading | Recommendations load 5 at a time — no map overload |
 
@@ -72,7 +72,7 @@ This is a live graph mutation becoming future recommendation context. Not a data
 
 This is the honest answer: **SQL or NoSQL could implement this**. The reason for choosing a graph is that the recommendation context is relationship-heavy and multi-hop. We need to traverse users, friends, interests, visits, explicit recommendations, and geographic relationships — and then explain why each place was selected.
 
-In a relational database, every hop is a JOIN. The social recommendation query here traverses:
+In a relational model, these relationships would typically require joins across multiple tables, with additional complexity as the traversal becomes multi-hop. The social recommendation logic combines several relationship paths across users, places, interests, and geographic areas:
 
 1. User → interests
 2. User → friends (via `CONNECTED_TO`)
@@ -82,13 +82,29 @@ In a relational database, every hop is a JOIN. The social recommendation query h
 6. Areas → nearby areas
 7. Friends → places in nearby areas
 
-That's a 7-hop chain. In Cypher, it reads like the data structure itself. In SQL it's a cascade of JOINs across multiple tables.
+In Cypher, this traversal reads like the data structure itself.
 
-More importantly, the graph makes **explanation** natural. The same traversal that produces a score also produces the reason string: *"Rahul visited this place. Matches your Coffee interest."*
+More importantly, the graph makes **explanation** natural. The same graph signals retrieved by the traversal are used both for scoring and for generating the explanation: *"Rahul visited this place. Matches your Coffee interest."*
 
 ### Why not ML?
 
-For this assessment, deterministic and explainable scoring is more defensible than a learned ranking model. Each recommendation can point to an exact graph path that caused it. A learned model could replace or augment the scoring later, once enough behavioral data accumulates.
+For this assessment, deterministic and explainable scoring is more defensible than a learned ranking model. Each recommendation can be explained using the graph evidence and place signals that contributed to it — without relying on opaque model weights. A learned ranking model could replace or augment the scoring layer later, once enough real behavioral data accumulates.
+
+---
+
+## What Makes This Original
+
+This is not a standard restaurant-recommendation app with a graph attached to it.
+
+The differentiation comes from combining all of these simultaneously:
+
+- **Real geography** — 834 actual OSM places, not invented data
+- **Personal interest matching** — normalized against the user's actual interest count
+- **Direct social evidence** — friends who visited or explicitly recommended the exact place
+- **Indirect geographic context** — friends active in a nearby area (treated honestly as context, never as direct evidence)
+- **Explainable multi-hop reasoning** — recommendations expose the relevant graph relationships and signals behind them
+- **Live graph mutations** — user actions write relationships to the graph; Visit and Recommend become future social recommendation signals, while Save is preserved as personal intent for future use.
+- **Mode-specific scoring policy** — same signals, different weights, genuinely different rankings
 
 ---
 
@@ -161,24 +177,57 @@ Progressive frontend display (5 at a time)
 
 This keeps the two concerns separate. The Cypher query doesn't know about modes or weights. The TypeScript scorer doesn't touch the graph.
 
-### The main Cypher query
+### The recommendation query
+
+The following is a simplified version of the production query used in `src/lib/queries.ts`, with repetitive projections condensed for readability. Non-essential projections and intermediate variables are omitted below; this is an architectural excerpt, not copy-pasteable Cypher.
 
 ```cypher
-MATCH (u:User {id: $userId})-[:CONNECTED_TO]-(friend:User)
-OPTIONAL MATCH (friend)-[:VISITED]->(place:Place)-[:LOCATED_IN]->(area:Area {id: $areaId})
-OPTIONAL MATCH (friend)-[:RECOMMENDED]->(place)
-OPTIONAL MATCH (u)-[:LIKES]->(interest:Interest)<-[:HAS_ATTRIBUTE]-(place)
-OPTIONAL MATCH (area)-[:NEAR]-(nearby:Area)<-[:LOCATED_IN]-(nbPlace:Place)<-[:VISITED]-(friend)
-RETURN place, collect(DISTINCT friend.name) AS visitors, ...
+// 1. User context
+MATCH (u:User {id: $userId})
+MATCH (selectedArea:Area {id: $areaId})
+OPTIONAL MATCH (u)-[:LIKES]->(userInterest:Interest)
+WITH u, selectedArea, collect(DISTINCT userInterest.name) AS userInterests
+OPTIONAL MATCH (u)-[:CONNECTED_TO]->(userFriend:User)
+WITH u, selectedArea, userInterests, collect(DISTINCT userFriend.name) AS friendNames
+
+// 2. Places in selected area
+MATCH (p:Place)-[:LOCATED_IN]->(area:Area)
+WHERE area = selectedArea
+
+// 3. Interest ↔ attribute matching
+OPTIONAL MATCH (p)-[:HAS_ATTRIBUTE]->(attribute:Attribute)
+WITH ..., [x IN userInterests WHERE x IN placeAttributes] AS matchedInterests
+
+// 4. Direct friend visits to this exact place
+OPTIONAL MATCH (u)-[:CONNECTED_TO]->(friend:User)-[:VISITED]->(p)
+WITH ..., collect(DISTINCT friend.name) AS visitors
+
+// 5. Direct friend recommendations of this exact place
+OPTIONAL MATCH (u)-[:CONNECTED_TO]->(friend2:User)-[:RECOMMENDED]->(p)
+WITH ..., collect(DISTINCT friend2.name) AS recommenders
+
+// 6. Indirect: friends active in a nearby area (NOT this place)
+OPTIONAL MATCH (u)-[:CONNECTED_TO]->(nearbyFriend:User)
+  -[:VISITED]->(nearbyPlace:Place)
+  -[:LOCATED_IN]->(nearbyArea:Area)
+WHERE (selectedArea)-[:NEAR]->(nearbyArea) AND nearbyArea.id <> $areaId
+WITH ..., collect(DISTINCT nearbyFriend.name) AS nearbyVisitors
+
+// Return raw signals — no score computed here
+RETURN p.id, p.name, p.rating, matchedInterests,
+       size(userInterests) AS totalUserInterests,
+       visitors, recommenders, nearbyVisitors, nearbyAreas
 ```
 
-This single query traverses across users, friends, places, areas, and nearby areas — returning everything the TypeScript scorer needs to produce a ranked, explainable result.
+The query returns raw graph signals. The TypeScript scoring layer (`src/lib/recommendations.ts`) receives these and applies the mode-specific 100-point model.
 
 ---
 
 ## Recommendation Modes
 
 All three modes use the same graph signals. What changes is how the 100 available points are allocated.
+
+**Why 100?** The total is not a cap applied after summing an unlimited raw score. It is constructed from bounded category maxima that add up to exactly 100. This makes the model interpretable: you can look at any recommendation and see how much each signal category contributed, on a fixed scale.
 
 ### For You — *Your interests + your social graph*
 
@@ -211,7 +260,13 @@ All three modes use the same graph signals. What changes is how the 100 availabl
 | Friend visits | 5 |
 | Friend recommendations | 5 |
 
-*The exploration bonus rewards places with **no direct social evidence**. It gives Discover a reason to surface genuinely new places rather than repeating what For You already surfaces.
+*The exploration bonus rewards places with **no direct social evidence**. It gives Discover a reason to surface genuinely new places rather than repeating what For You already surfaces:
+
+```
+0 direct social signals → +15
+1 direct social signal  → +8
+2+ direct signals       → +0
+```
 
 ### Scoring is bounded, not capped
 
@@ -224,7 +279,15 @@ Social signals use saturation rather than linear accumulation:
 3+ friends         → 100%
 ```
 
-This prevents a user with a large friend group from dominating the results purely through volume. Signal quality matters more than signal count.
+This prevents a user with a large friend group from dominating results purely through volume. Signal quality matters more than signal count.
+
+Interest matching is normalized against the user's own interest count:
+
+```
+interestScore = min(matchedInterests / totalUserInterests, 1) × categoryMax
+```
+
+A user with two interests who matches both gets the same interest score as a user with ten interests who matches all ten. The proportion of matched interests is what matters, not the raw count.
 
 ---
 
@@ -243,6 +306,23 @@ Richer context: friend avatars, relationship type, available actions.
 
 **Layer 3 — The graph overlay**
 An interactive graph visualization showing exactly which nodes and relationships contributed to the recommendation. Draggable, zoomable, pan-able. Not the full database — only the subgraph relevant to this specific recommendation.
+
+---
+
+## Screenshots
+
+**1. Area exploration and progressive loading**
+![Explore Map](explore-map.png)
+
+**2. Graph-backed place explanation**
+![Place Explanation](recommendation-place.png)
+
+**3. Interactive graph relationship view**
+![Graph Visualization](graph-explanation.png)
+
+*(Architecture reference)*
+**Recommendation architecture**
+![Recommendation architecture](recommendation-architecture.png)
 
 ---
 
@@ -388,7 +468,7 @@ Returns ranked place recommendations for a user in a given area and mode.
 
 | Param | Values |
 |---|---|
-| `userId` | `u1` · `u2` · `u3` · `u4` |
+| `userId` | demo users exposed in the UI: `u1`–`u4` |
 | `areaId` | `area1` (HSR Layout) · `area2` (Koramangala) |
 | `mode` | `for-you` · `friends` · `discover` |
 
@@ -396,17 +476,19 @@ Returns up to 50 ranked recommendations, each with score, reasons, visitor names
 
 ### `POST /api/places/action`
 
-Writes a user action to the graph using `MERGE` (idempotent).
+## User Actions and Graph Consequences
 
-```json
-{ "userId": "u1", "placeId": "osm-123", "action": "recommend" }
-```
+Users can independently perform three actions on any place:
 
-| Action | Graph relationship |
-|---|---|
-| `save` | `(User)-[:SAVED]->(Place)` |
-| `visit` | `(User)-[:VISITED]->(Place)` |
-| `recommend` | `(User)-[:RECOMMENDED]->(Place)` |
+| Action | Graph relationship | Recommendation signal? |
+|---|---|---|
+| **Save** | `(User)-[:SAVED]->(Place)` | ❌ Not a scoring signal in the current model. Writes to graph for future use. |
+| **Visit** | `(User)-[:VISITED]->(Place)` | ✅ Appears as a `visitors` signal for connected users |
+| **Recommend** | `(User)-[:RECOMMENDED]->(Place)` | ✅ Appears as a `recommenders` signal — an explicit social endorsement |
+
+All three actions use `MERGE` (idempotent). Multiple actions can coexist for the same place.
+
+`SAVED` exists in the graph data model and is preserved for future use — it is not yet wired into the scoring model.
 
 ---
 
@@ -432,7 +514,7 @@ This is the sequence that demonstrates the full graph-backed recommendation loop
 
 **Simulated social data.** The assessment provides no real social interaction dataset. Seeded data is used to make the demo reproducible and the recommendation behavior deterministic.
 
-**No visited-place filtering.** Visited places are not automatically excluded from recommendations. An attempt to add this caused the recommendation result set to go empty — the constraint was intentionally removed for the MVP.
+**No visited-place filtering.** Visited places are not automatically excluded from future recommendations. An attempt to add a `NOT VISITED` filter to the candidate query caused the result set to return empty — the constraint was removed for the MVP. Visit actions write to the graph and become social signals for connected users, but do not currently suppress the visited place from the visitor's own results.
 
 **Demo authentication only.** User switching uses `localStorage` — not real auth. This is appropriate for an assessment demo and explicitly flagged in the UI.
 
@@ -451,16 +533,24 @@ This is the sequence that demonstrates the full graph-backed recommendation loop
 
 ---
 
-## Assessment Notes (Wexa AI)
+## Assessment Requirement Mapping
 
-This project was submitted as part of the Wexa AI CognoDB Graph Database take-home assignment. The assignment asked for a working application backed by a graph database where the interesting questions involve **connections and relationships** rather than isolated rows.
+The Wexa AI assignment specifies explicit requirements. This table maps each one to the implementation:
 
-The core thesis: local place discovery is a relationship-traversal problem. Recommendations that factor in who you know, what they do, what you like, and where those intersect geographically are inherently multi-hop graph queries — and a graph database is the most direct representation of that problem.
-
-Every part of the implementation is defensible and explainable:
-- The scoring model is deterministic, not a black box
-- The Cypher queries are parameterized, not string-concatenated
-- Credentials never touch the browser
-- Explanation strings are generated from the same graph signals that produce the score
+| Requirement | Implementation |
+|---|---|
+| Graph data model with labeled nodes and typed relationships | 6 node types, 9 relationship types — see Graph Data Model section |
+| Real or realistic data | 834 real OSM places; social data is simulated and stated honestly |
+| Multi-hop Cypher (2+ hops required) | Multiple multi-hop traversals including User → Friend → Place → Area → Nearby Area |
+| Parameterized queries, no string concatenation | `$userId`, `$areaId` parameters; no template literal Cypher |
+| Environment-based credentials | `COGNO_DB_URI`, `COGNO_DB_USERNAME`, `COGNO_DB_PWD` — never in browser |
+| Working hosted application | _(link to be added)_ |
+| Source code in repository | Full source — queries, scoring, seed scripts, all included |
+| Data-loading scripts | `scripts/seed-social.ts`, `scripts/ingest-osm.ts` |
+| README with setup/run instructions | This document |
+| Graph data model diagram | `Relationships.png`, graph structure in this README |
+| Explanation of main queries | See Recommendation Architecture and Cypher query sections |
+| Loading / empty / error states | All three present in `explore/page.tsx` |
+| Graceful database failure handling | API returns error response; UI shows error state |
 
 The CognoDB instance remains live for evaluation.
