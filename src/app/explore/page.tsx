@@ -1745,13 +1745,18 @@ export default function ExplorePage() {
 
                     <div className="flex items-center rounded-2xl border border-slate-200 bg-white/95 px-1.5 py-1.5 shadow-lg shadow-slate-900/10 backdrop-blur">
 
-                        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-sm font-semibold text-white">
-                            {userName
-                                .charAt(
-                                    0
-                                )
-                                .toUpperCase()}
-                        </span>
+                        <img
+                            src={avatarUrl(
+                                userName
+                            )}
+                            alt={
+                                userName
+                            }
+                            title={
+                                userName
+                            }
+                            className="h-8 w-8 rounded-xl bg-emerald-50 object-cover"
+                        />
 
                         <select
                             value={
@@ -2632,20 +2637,24 @@ export default function ExplorePage() {
                                 [
                                     "for-you",
                                     "For You",
+                                    "Your interests",
                                 ],
                                 [
                                     "friends",
                                     "Friends",
+                                    "Social graph",
                                 ],
                                 [
                                     "discover",
                                     "Discover",
+                                    "Explore area",
                                 ],
                             ] as const
                         ).map(
                             ([
                                 value,
                                 label,
+                                subtitle,
                             ]) => (
                                 <button
                                     key={
@@ -2659,15 +2668,27 @@ export default function ExplorePage() {
                                     disabled={
                                         loading
                                     }
-                                    className={`rounded-xl px-4 py-2.5 text-xs font-semibold transition ${mode ===
+                                    className={`flex flex-col items-center rounded-xl px-4 py-2 transition ${mode ===
                                             value
                                             ? "bg-emerald-600 text-white shadow-sm shadow-emerald-900/20"
                                             : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
                                         } disabled:opacity-50`}
                                 >
-                                    {
-                                        label
-                                    }
+                                    <span className={`text-xs font-semibold leading-none ${
+                                        mode === value ? "text-white" : "text-slate-700"
+                                    }`}>
+                                        {
+                                            label
+                                        }
+                                    </span>
+
+                                    <span className={`mt-0.5 text-[10px] leading-none ${
+                                        mode === value ? "text-emerald-200" : "text-slate-400"
+                                    }`}>
+                                        {
+                                            subtitle
+                                        }
+                                    </span>
                                 </button>
                             )
                         )}
