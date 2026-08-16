@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ExploreMap from "@/components/ExploreMap";
 
@@ -64,6 +64,799 @@ type PlaceActionState = {
     recommend: boolean;
 };
 
+type GraphNode = {
+    id: string;
+    label: string;
+    type: "you" | "person" | "place" | "interest" | "verdict";
+    relation?: string;
+    x: number;
+    y: number;
+};
+
+type GraphEdge = {
+    from: string;
+    to: string;
+    label: string;
+    tone?: "green" | "slate";
+};
+
+function NetworkGraph({
+    place,
+    userName,
+    avatarUrl,
+    mode,
+    areaName,
+}: {
+    place: Recommendation;
+    userName: string;
+    avatarUrl: (name: string) => string;
+    mode: "for-you" | "friends" | "discover";
+    areaName?: string;
+}) {
+    const visitors = place.visitors ?? [];
+    const recommenders = place.recommenders ?? [];
+
+    const people = Array.from(
+        new Set([...visitors, ...recommenders])
+    );
+
+    const nearby = (
+        place.nearbyVisitors ?? []
+    ).filter(
+        (name) => !people.includes(name)
+    );
+
+    const interest =
+        place.matchedInterests[0] ?? null;
+
+    const verdict = (() => {
+        if (mode === "discover") {
+            return people.length || nearby.length
+                ? "Worth discovering"
+                : "New place to explore";
+        }
+
+        if (mode === "friends") {
+            return people.length
+                ? "Strong social signal"
+                : nearby.length
+                    ? "Friends are active nearby"
+                    : "No friend signal yet";
+        }
+
+        if (
+            interest &&
+            (people.length || nearby.length)
+        ) {
+            return "Top recommendation for you";
+        }
+
+        if (interest) {
+            return "Personal match";
+        }
+
+        if (people.length) {
+            return "Top recommendation for you";
+        }
+
+        if (nearby.length) {
+            return "Worth exploring";
+        }
+
+        return "New place to discover";
+    })();
+
+    // Keep the graph intentionally small:
+    // only relationships that help explain
+    // why this place is being shown.
+    const visiblePeople = [
+        ...people,
+        ...nearby,
+    ];
+
+    const columns = Math.min(
+        5,
+        Math.max(1, visiblePeople.length)
+    );
+
+    const rows = Math.max(
+        1,
+        Math.ceil(
+            visiblePeople.length / columns
+        )
+    );
+
+    const xFor = (index: number) =>
+        columns === 1
+            ? 500
+            : 140 +
+            (index % columns) *
+            (720 / (columns - 1));
+
+    const yFor = (index: number) =>
+        150 +
+        Math.floor(index / columns) * 115;
+
+    const nodes: GraphNode[] = [
+        // ==============================================
+        // FOR YOU:
+        // YOU → INTEREST → PLACE
+        // ==============================================
+
+        ...(mode === "for-you"
+            ? [
+                {
+                    id: "you",
+                    label: userName,
+                    type: "you" as const,
+                    x: 500,
+                    y: 65,
+                },
+            ]
+            : []),
+
+        ...(mode === "for-you" && interest
+            ? [
+                {
+                    id: "interest",
+                    label: interest,
+                    type: "interest" as const,
+                    x: 500,
+                    y: 185,
+                },
+            ]
+            : []),
+
+        // ==============================================
+        // DISCOVER:
+        // AREA → PLACE
+        // ==============================================
+
+        ...(mode === "discover"
+            ? [
+                {
+                    id: "area",
+                    label:
+                        areaName ??
+                        "This area",
+                    type: "interest" as const,
+                    x: 500,
+                    y: 90,
+                },
+            ]
+            : []),
+
+        // ==============================================
+        // FRIEND / SOCIAL SIGNALS
+        //
+        // These sit around the main path and connect
+        // into the recommended place.
+        // ==============================================
+
+        ...visiblePeople.map(
+            (name, index) => ({
+                id: `person-${name}`,
+                label: name,
+                type: "person" as const,
+
+                relation: recommenders.includes(
+                    name
+                )
+                    ? visitors.includes(name)
+                        ? "VISITED + RECOMMENDED"
+                        : "RECOMMENDED"
+                    : nearby.includes(name)
+                        ? "NEARBY"
+                        : "VISITED",
+
+                x: xFor(index),
+                y: 315,
+            })
+        ),
+
+        // ==============================================
+        // PLACE
+        // ==============================================
+
+        {
+            id: "place",
+            label: place.name,
+            type: "place",
+            x: 500,
+            y: 430,
+        },
+
+        // ==============================================
+        // CONCLUSION
+        // ==============================================
+
+        {
+            id: "verdict",
+            label: verdict,
+            type: "verdict" as const,
+            x: 500,
+            y: 585,
+        },
+    ];
+
+    const edges: GraphEdge[] = [
+        // ==============================================
+        // FOR YOU:
+        // YOU → INTEREST → PLACE
+        // ==============================================
+
+        ...(mode === "for-you" &&
+            interest
+            ? [
+                {
+                    from: "you",
+                    to: "interest",
+                    label: "likes",
+                    tone: "green" as const,
+                },
+                {
+                    from: "interest",
+                    to: "place",
+                    label: "matches",
+                    tone: "green" as const,
+                },
+            ]
+            : []),
+
+        // ==============================================
+        // DISCOVER:
+        // AREA → PLACE
+        // ==============================================
+
+        ...(mode === "discover"
+            ? [
+                {
+                    from: "area",
+                    to: "place",
+                    label: "in this area",
+                    tone: "slate" as const,
+                },
+            ]
+            : []),
+
+        // ==============================================
+        // SOCIAL SIGNALS → PLACE
+        // ==============================================
+
+        ...visiblePeople.map(
+            (name) => ({
+                from: `person-${name}`,
+                to: "place",
+
+                label: recommenders.includes(
+                    name
+                )
+                    ? visitors.includes(name)
+                        ? "visited + recommended"
+                        : "recommended"
+                    : nearby.includes(name)
+                        ? "nearby"
+                        : "visited",
+
+                tone:
+                    recommenders.includes(name)
+                        ? "green" as const
+                        : "slate" as const,
+            })
+        ),
+
+        // ==============================================
+        // PLACE → CONCLUSION
+        // ==============================================
+
+        {
+            from: "place",
+            to: "verdict",
+            label: "so",
+            tone: "green" as const,
+        },
+    ];
+
+    const [
+        positions,
+        setPositions,
+    ] = useState<
+        Record<
+            string,
+            { x: number; y: number }
+        >
+    >(
+        Object.fromEntries(
+            nodes.map((node) => [
+                node.id,
+                {
+                    x: node.x,
+                    y: node.y,
+                },
+            ])
+        )
+    );
+
+    const [zoom, setZoom] =
+        useState(1);
+
+    const [pan, setPan] =
+        useState({
+            x: 0,
+            y: 0,
+        });
+
+    const [dragging, setDragging] =
+        useState<string | null>(null);
+
+    const [dragOffset, setDragOffset] =
+        useState({
+            x: 0,
+            y: 0,
+        });
+
+    const [panning, setPanning] =
+        useState(false);
+
+    const panStart = useRef({
+        x: 0,
+        y: 0,
+        px: 0,
+        py: 0,
+    });
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setPositions(
+            Object.fromEntries(
+                nodes.map((node) => [
+                    node.id,
+                    {
+                        x: node.x,
+                        y: node.y,
+                    },
+                ])
+            )
+        );
+
+        setZoom(1);
+
+        setPan({
+            x: 0,
+            y: 0,
+        });
+    }, [place.id, mode]);
+
+    const fitView = () => {
+        setZoom(0.9);
+
+        setPan({
+            x: 0,
+            y: 0,
+        });
+    };
+
+    const nodeById =
+        Object.fromEntries(
+            nodes.map((node) => [
+                node.id,
+                node,
+            ])
+        );
+
+    return (
+        <div
+            className="relative mt-5 h-[min(64vh,620px)] min-h-[460px] overflow-hidden rounded-3xl border border-slate-100 bg-slate-50"
+            onWheel={(e) => {
+                e.preventDefault();
+
+                setZoom((value) =>
+                    Math.min(
+                        1.7,
+                        Math.max(
+                            0.55,
+                            value +
+                            (e.deltaY > 0
+                                ? -0.08
+                                : 0.08)
+                        )
+                    )
+                );
+            }}
+            onPointerDown={(e) => {
+                const target =
+                    e.target as HTMLElement;
+
+                if (
+                    target.closest?.(
+                        ".graph-node"
+                    )
+                ) {
+                    return;
+                }
+
+                setPanning(true);
+
+                panStart.current = {
+                    x: e.clientX,
+                    y: e.clientY,
+                    px: pan.x,
+                    py: pan.y,
+                };
+            }}
+            onPointerMove={(e) => {
+                if (!panning) return;
+
+                setPan({
+                    x:
+                        panStart.current.px +
+                        e.clientX -
+                        panStart.current.x,
+
+                    y:
+                        panStart.current.py +
+                        e.clientY -
+                        panStart.current.y,
+                });
+            }}
+            onPointerUp={() =>
+                setPanning(false)
+            }
+            onPointerLeave={() =>
+                setPanning(false)
+            }
+        >
+            <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-sm">
+                <button
+                    onClick={() =>
+                        setZoom((z) =>
+                            Math.min(
+                                1.7,
+                                z + 0.12
+                            )
+                        )
+                    }
+                    className="h-8 w-8 rounded-lg text-sm font-semibold hover:bg-slate-100"
+                >
+                    +
+                </button>
+
+                <button
+                    onClick={() =>
+                        setZoom((z) =>
+                            Math.max(
+                                0.55,
+                                z - 0.12
+                            )
+                        )
+                    }
+                    className="h-8 w-8 rounded-lg text-sm font-semibold hover:bg-slate-100"
+                >
+                    −
+                </button>
+
+                <button
+                    onClick={fitView}
+                    className="rounded-lg px-2 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                    Fit
+                </button>
+            </div>
+
+            <div
+                className="absolute left-1/2 top-1/2 h-[820px] w-[1100px]"
+                style={{
+                    transform:
+                        `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+                    transformOrigin:
+                        "center",
+                }}
+            >
+                <svg
+                    className="pointer-events-none absolute inset-0 h-full w-full"
+                    viewBox="0 0 1100 820"
+                    fill="none"
+                >
+                    {edges.map(
+                        (
+                            edge,
+                            index
+                        ) => {
+                            const from =
+                                positions[
+                                edge.from
+                                ] ??
+                                nodeById[
+                                edge.from
+                                ];
+
+                            const to =
+                                positions[
+                                edge.to
+                                ] ??
+                                nodeById[
+                                edge.to
+                                ];
+
+                            if (
+                                !from ||
+                                !to
+                            ) {
+                                return null;
+                            }
+
+                            const mx =
+                                (from.x +
+                                    to.x) /
+                                2;
+
+                            const my =
+                                (from.y +
+                                    to.y) /
+                                2;
+
+                            return (
+                                <g
+                                    key={`${edge.from}-${edge.to}-${index}`}
+                                >
+                                    <line
+                                        x1={from.x}
+                                        y1={from.y}
+                                        x2={to.x}
+                                        y2={to.y}
+                                        stroke={
+                                            edge.tone ===
+                                                "green"
+                                                ? "#10b981"
+                                                : "#94a3b8"
+                                        }
+                                        strokeWidth={
+                                            edge.tone ===
+                                                "green"
+                                                ? 3
+                                                : 2
+                                        }
+                                    />
+
+                                    <rect
+                                        x={
+                                            mx -
+                                            48
+                                        }
+                                        y={
+                                            my -
+                                            10
+                                        }
+                                        width="96"
+                                        height="20"
+                                        rx="10"
+                                        fill="white"
+                                        opacity="0.94"
+                                    />
+
+                                    <text
+                                        x={mx}
+                                        y={
+                                            my +
+                                            3.5
+                                        }
+                                        textAnchor="middle"
+                                        fontSize="8.5"
+                                        fontWeight="700"
+                                        fill={
+                                            edge.tone ===
+                                                "green"
+                                                ? "#047857"
+                                                : "#64748b"
+                                        }
+                                    >
+                                        {
+                                            edge.label
+                                        }
+                                    </text>
+                                </g>
+                            );
+                        }
+                    )}
+                </svg>
+
+                {nodes.map((node) => {
+                    const pos =
+                        positions[
+                        node.id
+                        ] ?? {
+                            x: node.x,
+                            y: node.y,
+                        };
+
+                    const isPlace =
+                        node.type ===
+                        "place";
+
+                    const isYou =
+                        node.type ===
+                        "you";
+
+                    return (
+                        <div
+                            key={node.id}
+                            className="graph-node absolute -translate-x-1/2 -translate-y-1/2 cursor-grab select-none active:cursor-grabbing"
+                            style={{
+                                left: pos.x,
+                                top: pos.y,
+                            }}
+                            onPointerDown={(
+                                e
+                            ) => {
+                                e.stopPropagation();
+
+                                setDragging(
+                                    node.id
+                                );
+
+                                setDragOffset(
+                                    {
+                                        x:
+                                            e.clientX -
+                                            pos.x *
+                                            zoom -
+                                            pan.x,
+
+                                        y:
+                                            e.clientY -
+                                            pos.y *
+                                            zoom -
+                                            pan.y,
+                                    }
+                                );
+
+                                (
+                                    e.currentTarget as HTMLElement
+                                ).setPointerCapture(
+                                    e.pointerId
+                                );
+                            }}
+                            onPointerMove={(
+                                e
+                            ) => {
+                                if (
+                                    dragging !==
+                                    node.id
+                                ) {
+                                    return;
+                                }
+
+                                setPositions(
+                                    (
+                                        current
+                                    ) => ({
+                                        ...current,
+
+                                        [node.id]:
+                                        {
+                                            x:
+                                                (e.clientX -
+                                                    dragOffset.x -
+                                                    pan.x) /
+                                                zoom,
+
+                                            y:
+                                                (e.clientY -
+                                                    dragOffset.y -
+                                                    pan.y) /
+                                                zoom,
+                                        },
+                                    })
+                                );
+                            }}
+                            onPointerUp={() =>
+                                setDragging(
+                                    null
+                                )
+                            }
+                        >
+                            {node.type ===
+                                "interest" ? (
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-center shadow-sm">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                                        {mode ===
+                                            "discover"
+                                            ? "AREA"
+                                            : "YOUR INTEREST"}
+                                    </p>
+
+                                    <p className="mt-0.5 text-sm font-bold text-slate-900">
+                                        {mode ===
+                                            "discover"
+                                            ? "📍"
+                                            : "☕"}{" "}
+                                        {
+                                            node.label
+                                        }
+                                    </p>
+                                </div>
+                            ) : node.type ===
+                                "verdict" ? (
+                                <div className="rounded-2xl border-2 border-emerald-400 bg-emerald-50 px-6 py-3 text-center shadow-lg">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                                        WHY THIS SHOWS UP
+                                    </p>
+
+                                    <p className="mt-1 max-w-[220px] text-sm font-bold text-emerald-900">
+                                        {
+                                            node.label
+                                        }
+                                    </p>
+                                </div>
+                            ) : isPlace ? (
+                                <div className="rounded-2xl border-2 border-emerald-400 bg-white px-6 py-4 text-center shadow-xl">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                                        PLACE
+                                    </p>
+
+                                    <p className="mt-1 max-w-[190px] text-sm font-bold text-slate-900">
+                                        {
+                                            node.label
+                                        }
+                                    </p>
+                                </div>
+                            ) : isYou ? (
+                                <div className="flex flex-col items-center">
+                                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-base font-bold text-white shadow-lg">
+                                        {node.label
+                                            .charAt(
+                                                0
+                                            )
+                                            .toUpperCase()}
+                                    </div>
+
+                                    <p className="mt-1 text-xs font-semibold text-slate-800">
+                                        {
+                                            node.label
+                                        }
+                                    </p>
+
+                                    <p className="text-[10px] font-semibold text-emerald-600">
+                                        YOU
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center">
+                                    <img
+                                        src={avatarUrl(
+                                            node.label
+                                        )}
+                                        alt={
+                                            node.label
+                                        }
+                                        className="h-14 w-14 rounded-full border-2 border-white bg-white object-cover shadow-lg"
+                                    />
+
+                                    <p className="mt-1 text-xs font-semibold text-slate-800">
+                                        {
+                                            node.label
+                                        }
+                                    </p>
+
+                                    <p className="max-w-[120px] text-center text-[9px] font-semibold text-slate-400">
+                                        {
+                                            node.relation
+                                        }
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="absolute bottom-3 left-3 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-[11px] text-slate-500 shadow-sm">
+                Drag nodes • drag empty space to pan • scroll to zoom
+            </div>
+        </div>
+    );
+}
+
 // ==================================================
 // PAGE
 // ==================================================
@@ -76,7 +869,9 @@ export default function ExplorePage() {
     // ==================================================
 
     const [userId, setUserId] =
-        useState<string | null>(null);
+        useState<string | null>(
+            null
+        );
 
     const [userName, setUserName] =
         useState("");
@@ -89,10 +884,22 @@ export default function ExplorePage() {
     // ==================================================
 
     const demoUsers = [
-        { id: "u1", name: "Arjun" },
-        { id: "u2", name: "Rahul" },
-        { id: "u3", name: "Priya" },
-        { id: "u4", name: "Aisha" },
+        {
+            id: "u1",
+            name: "Arjun",
+        },
+        {
+            id: "u2",
+            name: "Rahul",
+        },
+        {
+            id: "u3",
+            name: "Priya",
+        },
+        {
+            id: "u4",
+            name: "Aisha",
+        },
     ];
 
     // ==================================================
@@ -105,16 +912,21 @@ export default function ExplorePage() {
     const [areaId, setAreaId] =
         useState("area1");
 
-    const [areaSelected, setAreaSelected] =
-        useState(false);
+    const [
+        areaSelected,
+        setAreaSelected,
+    ] = useState(false);
 
     // ==================================================
     // DISCOVERY MODE
     // ==================================================
 
-    const [mode, setMode] = useState<
-        "for-you" | "friends" | "discover"
-    >("for-you");
+    const [mode, setMode] =
+        useState<
+            | "for-you"
+            | "friends"
+            | "discover"
+        >("for-you");
 
     // ==================================================
     // RECOMMENDATIONS
@@ -123,7 +935,9 @@ export default function ExplorePage() {
     const [
         recommendations,
         setRecommendations,
-    ] = useState<Recommendation[]>([]);
+    ] = useState<
+        Recommendation[]
+    >([]);
 
     const [loading, setLoading] =
         useState(false);
@@ -137,8 +951,10 @@ export default function ExplorePage() {
     // First 5 places are shown on both the list/map.
     // ==================================================
 
-    const [visibleCount, setVisibleCount] =
-        useState(5);
+    const [
+        visibleCount,
+        setVisibleCount,
+    ] = useState(5);
 
     // ==================================================
     // MAP / CARD SELECTION
@@ -147,7 +963,22 @@ export default function ExplorePage() {
     const [
         selectedPlaceId,
         setSelectedPlaceId,
-    ] = useState<string | null>(null);
+    ] = useState<string | null>(
+        null
+    );
+
+    const [
+        selectedPosition,
+        setSelectedPosition,
+    ] = useState<{
+        x: number;
+        y: number;
+    } | null>(null);
+
+    const [
+        showNetwork,
+        setShowNetwork,
+    ] = useState(false);
 
     // ==================================================
     // PLACE ACTION STATE
@@ -170,7 +1001,10 @@ export default function ExplorePage() {
         actionStates,
         setActionStates,
     ] = useState<
-        Record<string, PlaceActionState>
+        Record<
+            string,
+            PlaceActionState
+        >
     >({});
 
     // ==================================================
@@ -185,9 +1019,16 @@ export default function ExplorePage() {
     // ==================================================
 
     const visibleRecommendations =
-        recommendations.slice(
-            0,
-            visibleCount
+        useMemo(
+            () =>
+                recommendations.slice(
+                    0,
+                    visibleCount
+                ),
+            [
+                recommendations,
+                visibleCount,
+            ]
         );
 
     // ==================================================
@@ -197,7 +1038,8 @@ export default function ExplorePage() {
     const selectedPlace =
         recommendations.find(
             (place) =>
-                place.id === selectedPlaceId
+                place.id ===
+                selectedPlaceId
         ) ?? null;
 
     // ==================================================
@@ -206,23 +1048,29 @@ export default function ExplorePage() {
 
     useEffect(() => {
         const storedUserId =
-            localStorage.getItem("userId");
+            localStorage.getItem(
+                "userId"
+            );
 
         if (!storedUserId) {
             router.push("/login");
             return;
         }
-
-        setUserId(storedUserId);
-
-        setUserId(storedUserId);
-
-        const currentUser = demoUsers.find(
-            (user) => user.id === storedUserId
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setUserId(
+            storedUserId
         );
 
+        const currentUser =
+            demoUsers.find(
+                (user) =>
+                    user.id ===
+                    storedUserId
+            );
+
         setUserName(
-            currentUser?.name ?? "Explorer"
+            currentUser?.name ??
+            "Explorer"
         );
     }, [router]);
 
@@ -235,7 +1083,10 @@ export default function ExplorePage() {
     // ==================================================
 
     useEffect(() => {
-        if (!userId || !areaSelected) {
+        if (
+            !userId ||
+            !areaSelected
+        ) {
             return;
         }
 
@@ -244,9 +1095,17 @@ export default function ExplorePage() {
             setError("");
 
             // Clear stale results immediately.
-            setRecommendations([]);
-            setVisibleCount(5);
-            setSelectedPlaceId(null);
+            setRecommendations(
+                []
+            );
+
+            setVisibleCount(
+                5
+            );
+
+            setSelectedPlaceId(
+                null
+            );
 
             try {
                 const response =
@@ -263,15 +1122,23 @@ export default function ExplorePage() {
                 const data =
                     await response.json();
 
-                setRecommendations(data);
-            } catch (error) {
-                console.error(error);
+                setRecommendations(
+                    data
+                );
+            } catch (
+            error
+            ) {
+                console.error(
+                    error
+                );
 
                 setError(
                     "Could not load recommendations."
                 );
             } finally {
-                setLoading(false);
+                setLoading(
+                    false
+                );
             }
         }
 
@@ -291,7 +1158,9 @@ export default function ExplorePage() {
         placeId: string,
         action: PlaceAction
     ) {
-        if (!userId) return;
+        if (!userId) {
+            return;
+        }
 
         setActionLoading({
             placeId,
@@ -308,11 +1177,13 @@ export default function ExplorePage() {
                             "Content-Type":
                                 "application/json",
                         },
-                        body: JSON.stringify({
-                            userId,
-                            placeId,
-                            action,
-                        }),
+                        body: JSON.stringify(
+                            {
+                                userId,
+                                placeId,
+                                action,
+                            }
+                        ),
                     }
                 );
 
@@ -325,9 +1196,13 @@ export default function ExplorePage() {
             // Keep previous actions.
             // Only activate the clicked action.
             setActionStates(
-                (previous) => {
+                (
+                    previous
+                ) => {
                     const current =
-                        previous[placeId] ??
+                        previous[
+                        placeId
+                        ] ??
                         {
                             save: false,
                             visit: false,
@@ -336,20 +1211,26 @@ export default function ExplorePage() {
 
                     return {
                         ...previous,
+
                         [placeId]: {
                             ...current,
-                            [action]: true,
+                            [action]:
+                                true,
                         },
                     };
                 }
             );
-        } catch (error) {
+        } catch (
+        error
+        ) {
             console.error(
                 "Place action failed:",
                 error
             );
         } finally {
-            setActionLoading(null);
+            setActionLoading(
+                null
+            );
         }
     }
 
@@ -366,12 +1247,25 @@ export default function ExplorePage() {
         setLoading(true);
         setError("");
 
-        setRecommendations([]);
-        setVisibleCount(5);
-        setSelectedPlaceId(null);
+        setRecommendations(
+            []
+        );
 
-        setAreaId(nextAreaId);
-        setAreaSelected(true);
+        setVisibleCount(
+            5
+        );
+
+        setSelectedPlaceId(
+            null
+        );
+
+        setAreaId(
+            nextAreaId
+        );
+
+        setAreaSelected(
+            true
+        );
     }
 
     // ==================================================
@@ -382,13 +1276,36 @@ export default function ExplorePage() {
         nextAreaId: string
     ) {
         setLoading(true);
-        setRecommendations([]);
-        setVisibleCount(5);
-        setSelectedPlaceId(null);
+
+        setRecommendations(
+            []
+        );
+
+        setVisibleCount(
+            5
+        );
+
+        setSelectedPlaceId(
+            null
+        );
+
+        setSelectedPosition(
+            null
+        );
+
+        setShowNetwork(
+            false
+        );
+
         setError("");
 
-        setAreaId(nextAreaId);
-        setAreaSelected(true);
+        setAreaId(
+            nextAreaId
+        );
+
+        setAreaSelected(
+            true
+        );
     }
 
     // ==================================================
@@ -402,12 +1319,32 @@ export default function ExplorePage() {
             | "discover"
     ) {
         setLoading(true);
-        setRecommendations([]);
-        setVisibleCount(5);
-        setSelectedPlaceId(null);
+
+        setRecommendations(
+            []
+        );
+
+        setVisibleCount(
+            5
+        );
+
+        setSelectedPlaceId(
+            null
+        );
+
+        setSelectedPosition(
+            null
+        );
+
+        setShowNetwork(
+            false
+        );
+
         setError("");
 
-        setMode(nextMode);
+        setMode(
+            nextMode
+        );
     }
 
     // ==================================================
@@ -419,7 +1356,9 @@ export default function ExplorePage() {
             "userId"
         );
 
-        router.push("/login");
+        router.push(
+            "/login"
+        );
     }
 
     // ==================================================
@@ -438,671 +1377,1063 @@ export default function ExplorePage() {
     // PAGE
     // ==================================================
 
+    const currentArea =
+        areas.find(
+            (area) =>
+                area.id ===
+                areaId
+        );
+
+    const modeLabel = {
+        "for-you":
+            "Recommended for you",
+
+        friends:
+            "Your friends are into these",
+
+        discover:
+            "Worth discovering",
+    }[mode];
+
+    const avatarUrl =
+        (name: string) =>
+            `https://api.dicebear.com/9.x/open-peeps/svg?seed=${encodeURIComponent(name)}`;
+
+    const selectedVisitors =
+        selectedPlace?.visitors ??
+        [];
+
+    const getStory = (
+        place: Recommendation
+    ) => {
+        const interest =
+            place.matchedInterests?.[0] ??
+            null;
+
+        const visitors =
+            place.visitors ??
+            [];
+
+        const recommenders =
+            place.recommenders ??
+            [];
+
+        const nearby =
+            place.nearbyVisitors ??
+            [];
+
+        const socialPeople =
+            Array.from(
+                new Set([
+                    ...visitors,
+                    ...recommenders,
+                ])
+            );
+
+        const onlyVisited =
+            visitors.filter(
+                (name) =>
+                    !recommenders.includes(
+                        name
+                    )
+            );
+
+        const onlyRecommended =
+            recommenders.filter(
+                (name) =>
+                    !visitors.includes(
+                        name
+                    )
+            );
+
+        const both =
+            recommenders.filter(
+                (name) =>
+                    visitors.includes(
+                        name
+                    )
+            );
+
+        const joinNames = (
+            names: string[]
+        ) => {
+            if (
+                names.length ===
+                0
+            ) {
+                return "";
+            }
+
+            if (
+                names.length ===
+                1
+            ) {
+                return names[0];
+            }
+
+            if (
+                names.length ===
+                2
+            ) {
+                return `${names[0]} and ${names[1]}`;
+            }
+
+            return `${names
+                .slice(0, -1)
+                .join(", ")}, and ${
+                names[
+                    names.length - 1
+                ]
+            }`;
+        };
+
+        // ==================================================
+        // DISCOVER
+        //
+        // Discover is about finding places that are new
+        // and worth exploring in the selected area.
+        //
+        // Nearby friends are only supporting context.
+        // They are NOT presented as the reason to visit.
+        // ==================================================
+
+        if (
+            mode ===
+            "discover"
+        ) {
+            return {
+                kind:
+                    "discover" as const,
+
+                interest,
+
+                socialPeople,
+
+                nearby,
+
+                conclusion:
+                    "Worth discovering",
+
+                detail:
+                    nearby.length
+                        ? `New place in ${
+                            currentArea?.name ??
+                            "this area"
+                        } · ${
+                            nearby.length
+                        } friend${
+                            nearby.length ===
+                            1
+                                ? ""
+                                : "s"
+                        } nearby`
+                        : `New place in ${
+                            currentArea?.name ??
+                            "this area"
+                        }.`,
+            };
+        }
+
+        // ==================================================
+        // FRIENDS
+        // ==================================================
+
+        if (
+            mode ===
+            "friends"
+        ) {
+            return {
+                kind:
+                    "friends" as const,
+
+                interest,
+
+                socialPeople,
+
+                nearby,
+
+                conclusion:
+                    socialPeople.length
+                        ? "Your friends are into this"
+                        : nearby.length
+                            ? "Friends are active nearby"
+                            : "No friend activity yet",
+
+                detail:
+                    both.length ||
+                    onlyRecommended.length ||
+                    onlyVisited.length
+                        ? [
+                            both.length
+                                ? `${joinNames(
+                                    both
+                                )} visited + recommended`
+                                : "",
+
+                            onlyRecommended.length
+                                ? `${joinNames(
+                                    onlyRecommended
+                                )} recommended`
+                                : "",
+
+                            onlyVisited.length
+                                ? `${joinNames(
+                                    onlyVisited
+                                )} visited`
+                                : "",
+                        ]
+                            .filter(
+                                Boolean
+                            )
+                            .join(
+                                " · "
+                            )
+                        : nearby.length
+                            ? `${joinNames(
+                                nearby.slice(
+                                    0,
+                                    3
+                                )
+                            )} active nearby.`
+                            : "",
+            };
+        }
+
+        // ==================================================
+        // FOR YOU
+        // ==================================================
+
+        return {
+            kind:
+                "for-you" as const,
+
+            interest,
+
+            socialPeople,
+
+            nearby,
+
+            conclusion:
+                interest &&
+                socialPeople.length
+                    ? "Strong match for you"
+                    : interest
+                        ? "Matches what you like"
+                        : socialPeople.length
+                            ? "Your network is into this"
+                            : nearby.length
+                                ? "Worth exploring"
+                                : "A new place to discover",
+
+            detail: [
+                interest
+                    ? `You like ${interest}`
+                    : "",
+
+                both.length
+                    ? `${joinNames(
+                        both
+                    )} visited + recommended`
+                    : "",
+
+                onlyRecommended.length
+                    ? `${joinNames(
+                        onlyRecommended
+                    )} recommended`
+                    : "",
+
+                onlyVisited.length
+                    ? `${joinNames(
+                        onlyVisited
+                    )} visited`
+                    : "",
+
+                !interest &&
+                !socialPeople.length &&
+                nearby.length
+                    ? `${joinNames(
+                        nearby.slice(
+                            0,
+                            3
+                        )
+                    )} active nearby`
+                    : "",
+            ]
+                .filter(
+                    Boolean
+                )
+                .join(
+                    " · "
+                ),
+        };
+    };
+
     return (
-        <main className="min-h-screen bg-slate-950 text-white">
+        <main className="relative h-screen overflow-hidden bg-[#eef1ed] text-slate-900">
 
             {/* ==================================================
-                HEADER
+                FULL-SCREEN MAP
             ================================================== */}
 
-            <header className="border-b border-slate-800">
-                <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+            <div className="absolute inset-0">
+                <ExploreMap
+                    recommendations={
+                        visibleRecommendations
+                    }
+                    selectedPlaceId={
+                        selectedPlaceId
+                    }
+                    onSelectPlace={(
+                        placeId
+                    ) =>
+                        setSelectedPlaceId(
+                            placeId
+                        )
+                    }
+                    onSelectedPositionChange={
+                        setSelectedPosition
+                    }
+                    loading={
+                        loading
+                    }
+                    areaId={
+                        areaId
+                    }
+                    initialOverview={
+                        initialOverview
+                    }
+                    areas={
+                        areas
+                    }
+                    onSelectArea={
+                        handleAreaSelect
+                    }
+                />
+            </div>
 
-                    <div>
-                        <p className="text-sm font-semibold tracking-[0.2em] text-emerald-400">
-                            EXPLORE
-                        </p>
+            {/* ==================================================
+                TOP NAVIGATION
+            ================================================== */}
 
-                        <p className="text-xs text-slate-500">
-                            Discover through people and
-                            preferences
-                        </p>
+            <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between p-4 sm:p-5">
+
+                <div className="pointer-events-auto flex items-center gap-2">
+
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white/95 text-lg font-bold shadow-lg shadow-slate-900/10 backdrop-blur">
+                        ✦
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex h-11 items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 shadow-lg shadow-slate-900/10 backdrop-blur">
 
-                        {/* ==================================================
-        DEMO USER SWITCHER
+                        <span className="font-semibold tracking-tight text-slate-900">
+                            Explore
+                        </span>
 
-        This lets the interviewer quickly demonstrate
-        that different users have different graph
-        contexts and therefore different recommendations.
-    ================================================== */}
+                        <span className="h-5 w-px bg-slate-200" />
+
+                        <span className="text-sm font-medium text-slate-500">
+                            Discover places meant for you
+                        </span>
+
+                    </div>
+                </div>
+
+                <div className="pointer-events-auto flex items-center gap-2">
+
+                    <div className="flex items-center rounded-2xl border border-slate-200 bg-white/95 px-1.5 py-1.5 shadow-lg shadow-slate-900/10 backdrop-blur">
+
+                        <img
+                            src={avatarUrl(
+                                userName
+                            )}
+                            alt={
+                                userName
+                            }
+                            title={
+                                userName
+                            }
+                            className="h-8 w-8 rounded-xl bg-emerald-50 object-cover"
+                        />
 
                         <select
-                            value={userId ?? ""}
-                            disabled={loading}
-                            onChange={(e) => {
+                            value={
+                                userId ??
+                                ""
+                            }
+                            disabled={
+                                loading
+                            }
+                            onChange={(
+                                e
+                            ) => {
                                 const nextUserId =
                                     e.target.value;
 
                                 const nextUser =
                                     demoUsers.find(
-                                        (user) =>
+                                        (
+                                            user
+                                        ) =>
                                             user.id ===
                                             nextUserId
                                     );
 
-                                if (!nextUser) return;
+                                if (
+                                    !nextUser
+                                ) {
+                                    return;
+                                }
 
-                                // Persist the selected demo user.
                                 localStorage.setItem(
                                     "userId",
                                     nextUser.id
                                 );
 
-                                // Clear stale recommendation state.
-                                setLoading(true);
-                                setRecommendations([]);
-                                setVisibleCount(5);
-                                setSelectedPlaceId(null);
-                                setActionStates({});
-                                setError("");
+                                setLoading(
+                                    true
+                                );
 
-                                // Update current user.
-                                setUserId(nextUser.id);
-                                setUserName(nextUser.name);
+                                setRecommendations(
+                                    []
+                                );
+
+                                setVisibleCount(
+                                    5
+                                );
+
+                                setSelectedPlaceId(
+                                    null
+                                );
+
+                                setActionStates(
+                                    {}
+                                );
+
+                                setError(
+                                    ""
+                                );
+
+                                setUserId(
+                                    nextUser.id
+                                );
+
+                                setUserName(
+                                    nextUser.name
+                                );
                             }}
-                            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 disabled:opacity-60"
+                            className="cursor-pointer bg-transparent px-2 text-sm font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            {demoUsers.map((user) => (
-                                <option
-                                    key={user.id}
-                                    value={user.id}
-                                >
-                                    {user.name}
-                                </option>
-                            ))}
-                        </select>
-
-                        <button
-                            onClick={logout}
-                            className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-400 hover:bg-slate-800"
-                        >
-                            Logout
-                        </button>
-
-                    </div>
-
-                </div>
-            </header>
-
-            <div className="mx-auto max-w-7xl p-6">
-
-                {/* ==================================================
-                    INTRO
-                ================================================== */}
-
-                <div className="mb-6">
-
-                    <h1 className="text-3xl font-bold">
-
-                        {initialOverview
-                            ? "Explore nearby"
-                            : `Explore ${areas.find(
-                                (a) =>
-                                    a.id ===
-                                    areaId
-                            )?.name
-                            }`}
-
-                    </h1>
-
-                    <p className="mt-1 text-slate-400">
-
-                        {initialOverview
-                            ? "Choose an area to discover places recommended for you."
-                            : "Places recommended based on your interests and your network."}
-
-                    </p>
-
-                </div>
-
-                {/* ==================================================
-                    AREA SELECTOR
-                    Hidden until an area has been selected.
-                ================================================== */}
-
-                {!initialOverview && (
-                    <div className="mb-6">
-
-                        <select
-                            value={areaId}
-                            onChange={(e) =>
-                                handleAreaChange(
-                                    e.target.value
-                                )
-                            }
-                            disabled={loading}
-                            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-
-                            {areas.map(
-                                (area) => (
+                            {demoUsers.map(
+                                (
+                                    user
+                                ) => (
                                     <option
-                                        key={area.id}
+                                        key={
+                                            user.id
+                                        }
                                         value={
-                                            area.id
+                                            user.id
                                         }
                                     >
-                                        {area.name}
+                                        {
+                                            user.name
+                                        }
                                     </option>
                                 )
                             )}
-
                         </select>
 
-                    </div>
-                )}
-
-                {/* ==================================================
-                    DISCOVERY MODES
-                    Only available after choosing an area.
-                ================================================== */}
-
-                {!initialOverview && (
-                    <div className="mb-6 flex gap-2 rounded-xl border border-slate-800 bg-slate-900 p-1">
-
                         <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "for-you"
-                                )
+                            onClick={
+                                logout
                             }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "for-you"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                            className="mr-1 rounded-xl px-2 py-1.5 text-xs text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            title="Log out"
                         >
-                            For You
-                        </button>
-
-                        <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "friends"
-                                )
-                            }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "friends"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            Friends
-                        </button>
-
-                        <button
-                            onClick={() =>
-                                handleModeChange(
-                                    "discover"
-                                )
-                            }
-                            disabled={loading}
-                            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium transition ${mode === "discover"
-                                ? "bg-emerald-500 text-black"
-                                : "text-slate-400 hover:bg-slate-800 hover:text-white"
-                                } disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            Discover
+                            ↗
                         </button>
 
                     </div>
-                )}
+                </div>
+            </header>
 
-                {/* ==================================================
-                    MAP + RECOMMENDATIONS
-                ================================================== */}
+            {/* ==================================================
+                AREA CONTEXT
+            ================================================== */}
 
-                <div className="grid items-start gap-6 lg:grid-cols-[1.5fr_1fr]">
+            {!initialOverview &&
+                currentArea && (
+                    <div className="pointer-events-none absolute left-4 top-[76px] z-20 sm:left-5">
 
-                    {/* ==================================================
-                        MAP
-                    ================================================== */}
+                        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg shadow-slate-900/10 backdrop-blur">
 
-                    <div className="relative h-[600px] overflow-hidden rounded-3xl border border-slate-800">
+                            <span className="text-sm">
+                                📍
+                            </span>
 
-                        <ExploreMap
-                            recommendations={
-                                visibleRecommendations
-                            }
-                            selectedPlaceId={
-                                selectedPlaceId
-                            }
-                            onSelectPlace={
-                                (placeId) => {
-                                    setSelectedPlaceId(
-                                        placeId
-                                    );
+                            <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                                Exploring
+                            </span>
+
+                            <select
+                                value={
+                                    areaId
                                 }
-                            }
-                            loading={loading}
-                            areaId={areaId}
-                            initialOverview={
-                                initialOverview
-                            }
-                            areas={areas}
-                            onSelectArea={
-                                handleAreaSelect
-                            }
-                        />
+                                disabled={
+                                    loading
+                                }
+                                onChange={(
+                                    e
+                                ) =>
+                                    handleAreaChange(
+                                        e
+                                            .target
+                                            .value
+                                    )
+                                }
+                                className="cursor-pointer bg-transparent text-sm font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {areas.map(
+                                    (
+                                        area
+                                    ) => (
+                                        <option
+                                            key={
+                                                area.id
+                                            }
+                                            value={
+                                                area.id
+                                            }
+                                        >
+                                            {
+                                                area.name
+                                            }
+                                        </option>
+                                    )
+                                )}
+                            </select>
 
+                        </div>
                     </div>
+                )}
 
-                    {/* ==================================================
-                        RIGHT PANEL
-                    ================================================== */}
+            {/* ==================================================
+                INITIAL OVERVIEW PROMPT
+            ================================================== */}
 
-                    {initialOverview ? (
-                        <section className="flex h-[600px] items-center">
+            {initialOverview && (
+                <div className="pointer-events-none absolute bottom-5 left-4 z-20 sm:left-5">
 
-                            <div className="w-full rounded-3xl border border-slate-800 bg-slate-900 p-8">
+                    <div className="pointer-events-auto w-[min(390px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-2xl shadow-slate-900/15 backdrop-blur">
 
-                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
+                        <div className="flex items-start gap-3">
+
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                                📍
+                            </div>
+
+                            <div>
+
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-600">
                                     Start exploring
                                 </p>
 
-                                <h2 className="mt-3 text-2xl font-bold">
-                                    Pick an area
+                                <h2 className="mt-1 text-lg font-semibold tracking-tight">
+                                    Choose an area
                                 </h2>
 
-                                <p className="mt-2 text-sm leading-6 text-slate-400">
-                                    Choose HSR Layout or
-                                    Koramangala from the
-                                    map to see graph-powered
-                                    recommendations.
+                                <p className="mt-1 text-sm text-slate-500">
+                                    Pick a neighborhood and Explore will
+                                    build recommendations around you.
                                 </p>
 
-                                <div className="mt-6 space-y-3">
+                            </div>
+                        </div>
 
-                                    {areas.map(
-                                        (area) => (
-                                            <button
-                                                key={
-                                                    area.id
-                                                }
-                                                onClick={() =>
-                                                    handleAreaSelect(
-                                                        area.id
-                                                    )
-                                                }
-                                                className="w-full rounded-2xl border border-slate-700 bg-slate-800 p-4 text-left transition hover:border-emerald-400 hover:bg-slate-750"
-                                            >
+                        <div className="mt-4 grid grid-cols-2 gap-2">
 
-                                                <p className="font-semibold">
-                                                    {
-                                                        area.name
-                                                    }
-                                                </p>
+                            {areas.map(
+                                (
+                                    area
+                                ) => (
+                                    <button
+                                        key={
+                                            area.id
+                                        }
+                                        onClick={() =>
+                                            handleAreaSelect(
+                                                area.id
+                                            )
+                                        }
+                                        className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50"
+                                    >
 
-                                                <p className="mt-1 text-xs text-slate-500">
-                                                    Explore
-                                                    personalized
-                                                    places
-                                                </p>
+                                        <p className="text-sm font-semibold">
+                                            {
+                                                area.name
+                                            }
+                                        </p>
 
-                                            </button>
-                                        )
-                                    )}
+                                        <p className="mt-0.5 text-xs text-slate-400">
+                                            Explore area
+                                        </p>
 
-                                </div>
+                                    </button>
+                                )
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================================================
+                SELECTED PLACE CARD
+            ================================================== */}
+
+            {!initialOverview &&
+                selectedPlace &&
+                selectedPosition && (
+                    <aside
+                        className="pointer-events-auto absolute z-40 w-[420px] max-w-[calc(100vw-32px)] rounded-3xl border border-slate-200 bg-white/98 p-5 shadow-2xl shadow-slate-900/20 backdrop-blur"
+                        style={{
+                            left:
+                                selectedPosition.x >
+                                    680
+                                    ? selectedPosition.x -
+                                    444
+                                    : selectedPosition.x +
+                                    28,
+
+                            top:
+                                Math.max(
+                                    92,
+                                    Math.min(
+                                        selectedPosition.y -
+                                        190,
+                                        window.innerHeight -
+                                        560
+                                    )
+                                ),
+                        }}
+                    >
+
+                        <div className="flex items-start justify-between gap-3">
+
+                            <div className="min-w-0">
+
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                                    Selected place
+                                </p>
+
+                                <h2 className="mt-1 truncate text-xl font-semibold tracking-tight">
+                                    {
+                                        selectedPlace.name
+                                    }
+                                </h2>
 
                             </div>
 
-                        </section>
-                    ) : (
-                        <section className="h-[600px] overflow-y-auto pr-2">
+                            <button
+                                onClick={() =>
+                                    setSelectedPlaceId(
+                                        null
+                                    )
+                                }
+                                className="shrink-0 rounded-full border border-slate-200 px-2 py-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            >
+                                ×
+                            </button>
 
-                            {/* ==================================================
-                                SELECTED PLACE DETAIL
-                            ================================================== */}
+                        </div>
 
-                            {selectedPlace ? (
-                                <div className="mb-6 rounded-2xl border border-amber-400/40 bg-slate-900 p-6">
 
-                                    <div className="flex items-start justify-between gap-4">
 
-                                        <div>
+                        {/* ==================================================
+                            EXPLANATION
+                        ================================================== */}
 
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-amber-400">
-                                                Selected place
-                                            </p>
+                        {(() => {
+                            const story =
+                                getStory(
+                                    selectedPlace
+                                );
 
-                                            <h2 className="mt-1 text-2xl font-bold">
-                                                {
-                                                    selectedPlace.name
-                                                }
-                                            </h2>
+                            const storyPeople =
+                                story.socialPeople.slice(
+                                    0,
+                                    5
+                                );
 
-                                            <p className="mt-1 text-sm text-slate-400">
-                                                ⭐{" "}
-                                                {
-                                                    selectedPlace.rating
-                                                }
-                                            </p>
+                            return (
+                                <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-3 shadow-sm">
 
-                                        </div>
+                                    <div className="flex items-center justify-center gap-2 text-sm font-semibold text-slate-800">
 
-                                        <button
-                                            onClick={() =>
-                                                setSelectedPlaceId(
-                                                    null
-                                                )
+                                        {story.interest &&
+                                            story.kind ===
+                                            "for-you" && (
+                                                <span className="rounded-xl bg-emerald-50 px-2.5 py-1.5">
+                                                    ☕{" "}
+                                                    {
+                                                        story.interest
+                                                    }
+                                                </span>
+                                            )}
+
+                                        {story.interest &&
+                                            story.kind ===
+                                            "for-you" &&
+                                            storyPeople.length >
+                                            0 && (
+                                                <span className="text-slate-300">
+                                                    +
+                                                </span>
+                                            )}
+
+                                        {storyPeople.length >
+                                            0 && (
+                                                <div className="flex -space-x-2">
+
+                                                    {storyPeople.map(
+                                                        (
+                                                            name
+                                                        ) => (
+                                                            <img
+                                                                key={
+                                                                    name
+                                                                }
+                                                                src={avatarUrl(
+                                                                    name
+                                                                )}
+                                                                alt={
+                                                                    name
+                                                                }
+                                                                title={
+                                                                    name
+                                                                }
+                                                                className="h-9 w-9 rounded-full border-2 border-white bg-emerald-50 object-cover shadow-sm"
+                                                            />
+                                                        )
+                                                    )}
+
+                                                </div>
+                                            )}
+
+                                        {story.kind ===
+                                            "discover" &&
+                                            !storyPeople.length && (
+                                                <span className="rounded-xl bg-slate-50 px-3 py-1.5">
+                                                    📍{" "}
+                                                    {
+                                                        currentArea?.name ??
+                                                        "This area"
+                                                    }
+                                                </span>
+                                            )}
+
+                                    </div>
+
+                                    {story.detail && (
+                                        <p className="mt-2 text-center text-xs leading-5 text-slate-500">
+                                            {
+                                                story.detail
                                             }
-                                            className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-800 hover:text-white"
-                                        >
-                                            ✕
-                                        </button>
+                                        </p>
+                                    )}
 
+                                    <div className="my-2 flex justify-center text-emerald-500">
+                                        ↓
                                     </div>
 
-                                    {/* SCORE */}
+                                    <div className="rounded-xl bg-emerald-50 px-3 py-2 text-center">
 
-                                    <div className="mt-4 flex items-center justify-between">
-
-                                        <span className="text-sm text-slate-400">
-                                            Recommendation match
-                                        </span>
-
-                                        <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-semibold text-emerald-400">
-
-                                            {selectedPlace.displayScore ??
-                                                Math.min(
-                                                    selectedPlace.score,
-                                                    100
-                                                )}{" "}
-                                            match
-
-                                        </span>
-
-                                    </div>
-
-                                    {/* DESCRIPTION */}
-
-                                    <p className="mt-4 text-sm leading-6 text-slate-400">
-                                        {
-                                            selectedPlace.description
-                                        }
-                                    </p>
-
-                                    {/* WHY THIS PLACE */}
-
-                                    <div className="mt-5">
-
-                                        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                            Why this place?
+                                        <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">
+                                            So...
                                         </p>
 
-                                        <div className="space-y-2">
+                                        <p className="mt-0.5 text-sm font-bold text-emerald-900">
+                                            {
+                                                story.conclusion
+                                            }
+                                        </p>
 
-                                            {selectedPlace.reasons.map(
+                                    </div>
+
+                                </div>
+                            );
+                        })()}
+
+                        {/* Friends visited */}
+
+                        {selectedVisitors.length >
+                            0 && (
+                                <div className="mt-3 flex items-center justify-center gap-2">
+
+                                    <div className="flex -space-x-2">
+
+                                        {selectedVisitors
+                                            .slice(
+                                                0,
+                                                4
+                                            )
+                                            .map(
                                                 (
-                                                    reason
+                                                    name
                                                 ) => (
-                                                    <p
+                                                    <img
                                                         key={
-                                                            reason
+                                                            name
                                                         }
-                                                        className="text-sm text-slate-300"
-                                                    >
-                                                        <span className="mr-2 text-emerald-400">
-                                                            ✓
-                                                        </span>
-
-                                                        {
-                                                            reason
+                                                        src={avatarUrl(
+                                                            name
+                                                        )}
+                                                        alt={
+                                                            name
                                                         }
-                                                    </p>
+                                                        title={
+                                                            name
+                                                        }
+                                                        className="h-7 w-7 rounded-full border-2 border-white bg-emerald-50 object-cover"
+                                                    />
                                                 )
                                             )}
 
+                                    </div>
+
+                                    <span className="text-[11px] text-slate-500">
+                                        {
+                                            selectedVisitors.length
+                                        }{" "}
+                                        friend
+                                        {
+                                            selectedVisitors.length ===
+                                                1
+                                                ? ""
+                                                : "s"
+                                        }{" "}
+                                        visited
+                                    </span>
+
+                                </div>
+                            )}
+
+                        {/* Graph button */}
+
+                        <div className="mt-4">
+
+                            <button
+                                onClick={() =>
+                                    setShowNetwork(
+                                        true
+                                    )
+                                }
+                                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm shadow-emerald-900/15 transition hover:bg-emerald-700 active:scale-[0.98]"
+                            >
+                                <span>View graph connections</span>
+                                <span className="opacity-75">→</span>
+                            </button>
+
+                        </div>
+
+                        {/* Actions */}
+
+                        <div className="mt-5 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4">
+
+                            {(
+                                [
+                                    [
+                                        "save",
+                                        "Save",
+                                    ],
+                                    [
+                                        "visit",
+                                        "Visited",
+                                    ],
+                                    [
+                                        "recommend",
+                                        "Recommend",
+                                    ],
+                                ] as const
+                            ).map(
+                                ([
+                                    action,
+                                    label,
+                                ]) => {
+                                    const active =
+                                        actionStates[
+                                        selectedPlace
+                                            .id
+                                        ]?.[
+                                        action
+                                        ];
+
+                                    return (
+                                        <button
+                                            key={
+                                                action
+                                            }
+                                            onClick={() =>
+                                                handlePlaceAction(
+                                                    selectedPlace.id,
+                                                    action
+                                                )
+                                            }
+                                            disabled={
+                                                actionLoading !==
+                                                null
+                                            }
+                                            title={
+                                                action ===
+                                                    "save"
+                                                    ? "Save this place for your own future discovery."
+                                                    : action ===
+                                                        "visit"
+                                                        ? "Record a visit. This can become a social recommendation signal."
+                                                        : "Recommend this place to friends and create a recommendation relationship."
+                                            }
+                                            className={`rounded-xl border px-2 py-2 text-xs font-medium transition ${active
+                                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                                } disabled:opacity-50`}
+                                        >
+                                            {actionLoading?.placeId ===
+                                                selectedPlace.id &&
+                                                actionLoading.action ===
+                                                action
+                                                ? "Saving..."
+                                                : active
+                                                    ? `✓ ${label}`
+                                                    : label}
+                                        </button>
+                                    );
+                                }
+                            )}
+
+                        </div>
+                    </aside>
+                )}
+
+            {/* ==================================================
+                RECOMMENDATION TRAY
+            ================================================== */}
+
+            {/* ==================================================
+                RECOMMENDATION TRAY
+            ================================================== */}
+
+            {!initialOverview && (
+                <section className="absolute bottom-5 right-4 top-[76px] z-20 w-[min(360px,calc(100vw-2rem))] sm:right-5">
+
+                    <div className="h-full overflow-hidden rounded-3xl border border-slate-200 bg-white/96 shadow-2xl shadow-slate-900/15 backdrop-blur">
+
+                        {/* ==============================
+                            TRAY HEADER
+                        ============================== */}
+
+                        <div className="px-4 pb-3 pt-4">
+
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+
+                                {mode ===
+                                    "for-you"
+                                    ? "✨"
+                                    : mode ===
+                                        "friends"
+                                        ? "👥"
+                                        : "✦"}{" "}
+
+                                {modeLabel}
+
+                            </p>
+
+                            <p className="mt-0.5 text-xs text-slate-400">
+                                {recommendations.length} places
+                            </p>
+
+                        </div>
+
+                        {/* ==============================
+                            CONTENT
+                        ============================== */}
+
+                        {loading ? (
+
+                            <div className="px-4 pb-4">
+
+                                <div className="rounded-2xl bg-slate-50 px-4 py-5">
+
+                                    <div className="flex items-center gap-3">
+
+                                        <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-500" />
+
+                                        <div>
+
+                                            <p className="text-sm font-medium text-slate-700">
+                                                Finding places...
+                                            </p>
+
+                                            <p className="mt-0.5 text-xs text-slate-400">
+                                                Analyzing your graph
+                                            </p>
+
                                         </div>
 
                                     </div>
 
-                                    {/* FRIEND VISITS */}
-
-                                    {selectedPlace
-                                        .visitors
-                                        .length >
-                                        0 && (
-                                            <div className="mt-5">
-
-                                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                    Friends who visited
-                                                </p>
-
-                                                <p className="text-sm text-slate-300">
-                                                    {selectedPlace.visitors.join(
-                                                        ", "
-                                                    )}
-                                                </p>
-
-                                            </div>
-                                        )}
-
-                                    {/* RECOMMENDERS */}
-
-                                    {selectedPlace
-                                        .recommenders
-                                        .length >
-                                        0 && (
-                                            <div className="mt-4">
-
-                                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                    Recommended by
-                                                </p>
-
-                                                <p className="text-sm text-slate-300">
-                                                    {selectedPlace.recommenders.join(
-                                                        ", "
-                                                    )}
-                                                </p>
-
-                                            </div>
-                                        )}
-
-                                    {/* ==================================================
-                                        ACTIONS
-                                    ================================================== */}
-
-                                    <div className="mt-6 grid grid-cols-3 gap-2">
-
-                                        {/* SAVE */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "save"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.save
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "save"
-                                                ? "Saving..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.save
-                                                    ? "✓ Saved"
-                                                    : "Save"}
-                                        </button>
-
-                                        {/* VISITED */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "visit"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.visit
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "visit"
-                                                ? "Saving..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.visit
-                                                    ? "✓ Visited"
-                                                    : "Visited"}
-                                        </button>
-
-                                        {/* RECOMMEND */}
-
-                                        <button
-                                            onClick={() =>
-                                                handlePlaceAction(
-                                                    selectedPlace.id,
-                                                    "recommend"
-                                                )
-                                            }
-                                            disabled={
-                                                actionLoading !==
-                                                null
-                                            }
-                                            className={`rounded-xl border px-3 py-2 text-sm transition ${actionStates[
-                                                selectedPlace.id
-                                            ]?.recommend
-                                                ? "border-emerald-400 bg-emerald-500/10 text-emerald-400"
-                                                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                                                }`}
-                                        >
-                                            {actionLoading?.placeId ===
-                                                selectedPlace.id &&
-                                                actionLoading.action ===
-                                                "recommend"
-                                                ? "Sending..."
-                                                : actionStates[
-                                                    selectedPlace.id
-                                                ]?.recommend
-                                                    ? "✓ Recommended"
-                                                    : "Recommend"}
-                                        </button>
-
-                                    </div>
-
                                 </div>
-                            ) : (
-                                <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-
-                                    <p className="text-sm text-slate-400">
-                                        Select a place on the
-                                        map or from the
-                                        recommendations.
-                                    </p>
-
-                                </div>
-                            )}
-
-                            {/* ==================================================
-                                RECOMMENDATION LIST HEADER
-                            ================================================== */}
-
-                            <div className="mb-4 flex items-center justify-between">
-
-                                <h2 className="text-xl font-semibold">
-                                    Recommended for you
-                                </h2>
-
-                                {!loading && (
-                                    <span className="text-sm text-slate-500">
-                                        {
-                                            recommendations.length
-                                        }{" "}
-                                        places
-                                    </span>
-                                )}
 
                             </div>
 
-                            {/* ==================================================
-                                LOADING
-                            ================================================== */}
+                        ) : error ? (
 
-                            {loading && (
-                                <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+                            <div className="px-4 pb-4">
 
-                                    <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-emerald-400" />
-
-                                    <p className="text-sm text-slate-300">
-                                        Finding
-                                        recommendations...
-                                    </p>
-
-                                    <p className="mt-1 text-xs text-slate-500">
-                                        Analyzing your graph
-                                        connections and
-                                        preferences
-                                    </p>
-
-                                </div>
-                            )}
-
-                            {/* ==================================================
-                                ERROR
-                            ================================================== */}
-
-                            {error && (
-                                <div className="rounded-2xl border border-red-900 bg-red-950/30 p-5 text-red-400">
+                                <div className="rounded-2xl bg-red-50 px-4 py-4 text-sm text-red-600">
                                     {error}
                                 </div>
-                            )}
 
-                            {/* ==================================================
-                                EMPTY
-                            ================================================== */}
+                            </div>
 
-                            {!loading &&
-                                !error &&
-                                recommendations.length ===
-                                0 && (
-                                    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
-                                        No recommendations
-                                        found.
-                                    </div>
-                                )}
+                        ) : recommendations.length ===
+                            0 ? (
 
-                            {/* ==================================================
-                                RECOMMENDATION CARDS
-                            ================================================== */}
+                            <div className="px-4 pb-4">
 
-                            {!loading && (
-                                <div className="space-y-4">
+                                <div className="rounded-2xl bg-slate-50 px-4 py-5 text-center text-sm text-slate-500">
+                                    No recommendations found.
+                                </div>
+
+                            </div>
+
+                        ) : (
+
+                            <div className="flex h-[calc(100%-72px)] flex-col">
+
+                                {/* ==============================
+                                    PLACE LIST
+                                ============================== */}
+
+                                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 [&::-webkit-scrollbar]:w-[3px] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-200 [&::-webkit-scrollbar-track]:bg-transparent">
 
                                     {visibleRecommendations.map(
-                                        (item) => {
-                                            const isSelected =
-                                                selectedPlaceId ===
-                                                item.id;
+                                        (
+                                            item
+                                        ) => {
+
+                                            const story =
+                                                getStory(
+                                                    item
+                                                );
+
+                                            const storyPeople =
+                                                story.socialPeople.slice(
+                                                    0,
+                                                    4
+                                                );
 
                                             return (
-                                                <article
+                                                <button
                                                     key={
                                                         item.id
                                                     }
@@ -1111,129 +2442,340 @@ export default function ExplorePage() {
                                                             item.id
                                                         )
                                                     }
-                                                    className={`cursor-pointer rounded-2xl border p-5 transition ${isSelected
-                                                        ? "border-amber-400 bg-slate-800"
-                                                        : "border-slate-800 bg-slate-900 hover:border-slate-700"
-                                                        }`}
+                                                    className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
                                                 >
 
-                                                    {/* CARD HEADER */}
+                                                    {/* PLACE NAME */}
 
-                                                    <div className="flex items-start justify-between gap-4">
+                                                    <div className="flex items-start justify-between gap-3">
 
-                                                        <div>
+                                                        <div className="min-w-0">
 
-                                                            <h3 className="text-lg font-semibold">
+                                                            <p className="truncate text-sm font-semibold text-slate-900">
                                                                 {
                                                                     item.name
-                                                                }
-                                                            </h3>
-
-                                                            <p className="mt-1 text-sm text-slate-400">
-                                                                ⭐{" "}
-                                                                {
-                                                                    item.rating
                                                                 }
                                                             </p>
 
                                                         </div>
 
-                                                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-medium text-emerald-400">
-
-                                                            {item.displayScore ??
-                                                                Math.min(
-                                                                    item.score,
-                                                                    100
-                                                                )}{" "}
-                                                            match
-
-                                                        </span>
-
                                                     </div>
 
-                                                    {/* DESCRIPTION */}
+                                                    {/* ==============================
+                                                        VISUAL EXPLANATION
+                                                    ============================== */}
 
-                                                    <p className="mt-3 text-sm leading-6 text-slate-400">
-                                                        {
-                                                            item.description
-                                                        }
-                                                    </p>
+                                                    <div className="mt-3 rounded-xl bg-emerald-50/50 px-3 py-2.5">
 
-                                                    {/* REASONS */}
+                                                        <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-700">
 
-                                                    <div className="mt-4">
+                                                            {/* INTEREST */}
 
-                                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                                                            Why this
-                                                            place?
-                                                        </p>
+                                                            {story.interest &&
+                                                                story.kind ===
+                                                                    "for-you" && (
 
-                                                        <div className="space-y-1.5">
-
-                                                            {item.reasons.map(
-                                                                (
-                                                                    reason
-                                                                ) => (
-                                                                    <p
-                                                                        key={
-                                                                            reason
-                                                                        }
-                                                                        className="text-sm text-slate-300"
-                                                                    >
-                                                                        <span className="mr-2 text-emerald-400">
-                                                                            ✓
-                                                                        </span>
-
+                                                                    <span className="rounded-full bg-white/80 px-2 py-1">
+                                                                        ☕{" "}
                                                                         {
-                                                                            reason
+                                                                            story.interest
                                                                         }
-                                                                    </p>
-                                                                )
+                                                                    </span>
+
+                                                                )}
+
+                                                            {/* FRIEND AVATARS */}
+
+                                                            {storyPeople.length >
+                                                                0 && (
+
+                                                                <div className="flex -space-x-2">
+
+                                                                    {storyPeople.map(
+                                                                        (
+                                                                            name
+                                                                        ) => (
+
+                                                                            <img
+                                                                                key={
+                                                                                    name
+                                                                                }
+                                                                                src={avatarUrl(
+                                                                                    name
+                                                                                )}
+                                                                                alt={
+                                                                                    name
+                                                                                }
+                                                                                title={
+                                                                                    name
+                                                                                }
+                                                                                className="h-7 w-7 rounded-full border-2 border-white bg-emerald-50 object-cover"
+                                                                            />
+
+                                                                        )
+                                                                    )}
+
+                                                                </div>
+
                                                             )}
+
+                                                            {/* DISCOVER AREA */}
+
+                                                            {story.kind ===
+                                                                "discover" &&
+                                                                !storyPeople.length && (
+
+                                                                    <span className="rounded-full bg-white/80 px-2 py-1">
+                                                                        📍{" "}
+                                                                        {
+                                                                            currentArea?.name ??
+                                                                            "This area"
+                                                                        }
+                                                                    </span>
+
+                                                                )}
+
+                                                            {/* DISCOVER NEARBY */}
+
+                                                            {story.kind ===
+                                                                "discover" &&
+                                                                story.nearby.length >
+                                                                    0 && (
+
+                                                                    <span className="rounded-full bg-white/80 px-2 py-1 text-slate-500">
+                                                                        👥{" "}
+                                                                        {
+                                                                            story.nearby.length
+                                                                        }{" "}
+                                                                        nearby
+                                                                    </span>
+
+                                                                )}
 
                                                         </div>
 
+                                                        {/* HUMAN EXPLANATION */}
+
+                                                        {story.detail && (
+
+                                                            <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-slate-500">
+                                                                {
+                                                                    story.detail
+                                                                }
+                                                            </p>
+
+                                                        )}
+
                                                     </div>
 
-                                                </article>
+                                                </button>
                                             );
                                         }
                                     )}
 
-                                    {/* ==================================================
-                                        LOAD 5 MORE
-                                    ================================================== */}
+                                </div>
 
-                                    {visibleCount <
-                                        recommendations.length && (
-                                            <button
-                                                onClick={() =>
-                                                    setVisibleCount(
-                                                        (
-                                                            count
-                                                        ) =>
-                                                            Math.min(
-                                                                count +
+                                {/* ==============================
+                                    SHOW MORE
+                                ============================== */}
+
+                                {visibleCount <
+                                    recommendations.length && (
+
+                                    <div className="shrink-0 px-3 pb-3 pt-3">
+
+                                        <button
+                                            onClick={() =>
+                                                setVisibleCount(
+                                                    (
+                                                        count
+                                                    ) =>
+                                                        Math.min(
+                                                            count +
                                                                 5,
-                                                                recommendations.length
-                                                            )
-                                                    )
-                                                }
-                                                className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 font-medium text-black hover:bg-emerald-400"
-                                            >
-                                                Load 5 more
-                                            </button>
-                                        )}
+                                                            recommendations.length
+                                                        )
+                                                )
+                                            }
+                                            className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                                        >
+
+                                            Show more
+                                            <span className="ml-1">
+                                                →
+                                            </span>
+
+                                        </button>
+
+                                    </div>
+
+                                )}
+
+                            </div>
+
+                        )}
+
+                    </div>
+
+                </section>
+            )}
+
+            {/* ==================================================
+                DISCOVERY MODE SELECTOR
+            ================================================== */}
+
+            {!initialOverview && (
+                <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2">
+
+                    <div className="flex rounded-2xl border border-slate-200 bg-white/96 p-1 shadow-xl shadow-slate-900/10 backdrop-blur">
+
+                        {(
+                            [
+                                [
+                                    "for-you",
+                                    "For You",
+                                    "Your interests",
+                                ],
+                                [
+                                    "friends",
+                                    "Friends",
+                                    "Social graph",
+                                ],
+                                [
+                                    "discover",
+                                    "Discover",
+                                    "Explore area",
+                                ],
+                            ] as const
+                        ).map(
+                            ([
+                                value,
+                                label,
+                                subtitle,
+                            ]) => (
+                                <button
+                                    key={
+                                        value
+                                    }
+                                    onClick={() =>
+                                        handleModeChange(
+                                            value
+                                        )
+                                    }
+                                    disabled={
+                                        loading
+                                    }
+                                    className={`flex flex-col items-center rounded-xl px-4 py-2 transition ${mode ===
+                                            value
+                                            ? "bg-emerald-600 text-white shadow-sm shadow-emerald-900/20"
+                                            : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                        } disabled:opacity-50`}
+                                >
+                                    <span className={`text-xs font-semibold leading-none ${
+                                        mode === value ? "text-white" : "text-slate-700"
+                                    }`}>
+                                        {
+                                            label
+                                        }
+                                    </span>
+
+                                    <span className={`mt-0.5 text-[10px] leading-none ${
+                                        mode === value ? "text-emerald-200" : "text-slate-400"
+                                    }`}>
+                                        {
+                                            subtitle
+                                        }
+                                    </span>
+                                </button>
+                            )
+                        )}
+
+                    </div>
+                </div>
+            )}
+
+            {/* ==================================================
+                INTERACTIVE GRAPH STORY
+            ================================================== */}
+
+            {showNetwork &&
+                selectedPlace && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/35 p-4 backdrop-blur-[3px]">
+
+                        <div className="w-[min(980px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+
+                            <div className="flex items-start justify-between gap-4">
+
+                                <div>
+
+                                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                                        Graph connections
+                                    </p>
+
+                                    <h3 className="mt-1 text-xl font-semibold">
+                                        Why{" "}
+                                        {
+                                            userName
+                                        }{" "}
+                                        sees{" "}
+                                        {
+                                            selectedPlace.name
+                                        }
+                                    </h3>
+
+                                    <p className="mt-1 text-sm text-slate-500">
+                                        Only the relationships that help explain this recommendation are shown.
+                                    </p>
 
                                 </div>
-                            )}
 
-                        </section>
-                    )}
+                                <button
+                                    onClick={() =>
+                                        setShowNetwork(
+                                            false
+                                        )
+                                    }
+                                    className="shrink-0 rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50"
+                                >
+                                    ×
+                                </button>
 
-                </div>
+                            </div>
 
-            </div>
+                            <NetworkGraph
+                                place={
+                                    selectedPlace
+                                }
+                                userName={
+                                    userName
+                                }
+                                avatarUrl={
+                                    avatarUrl
+                                }
+                                mode={
+                                    mode
+                                }
+                                areaName={
+                                    currentArea?.name
+                                }
+                            />
+
+                            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-center text-sm font-medium text-emerald-900">
+
+                                {mode ===
+                                    "for-you"
+                                    ? "Your interests + what your friends do around places → a recommendation for you."
+                                    : mode ===
+                                        "friends"
+                                        ? "What your friends visited or recommended → social recommendations."
+                                        : "Places in the area → discover new places, with social context when available."}
+
+                            </div>
+
+                        </div>
+                    </div>
+                )}
+
         </main>
     );
 }

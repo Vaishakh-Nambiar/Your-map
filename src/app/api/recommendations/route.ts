@@ -195,7 +195,7 @@ export async function GET(request: NextRequest) {
         // the best results.
         // ==================================================
 
-        let topRecommendations =
+        const topRecommendations =
             recommendations.slice(0, 50);
 
         // Discover should always have enough places

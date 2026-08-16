@@ -15,6 +15,7 @@ type Recommendation = {
     longitude: number;
     score: number;
     displayScore?: number;
+    visitors?: string[];
 };
 
 // ==================================================
@@ -36,6 +37,7 @@ type ExploreMapProps = {
     recommendations: Recommendation[];
     selectedPlaceId: string | null;
     onSelectPlace: (id: string) => void;
+    onSelectedPositionChange?: (position: { x: number; y: number } | null) => void;
     loading: boolean;
     areaId: string;
 
@@ -53,6 +55,7 @@ export default function ExploreMap({
     recommendations,
     selectedPlaceId,
     onSelectPlace,
+    onSelectedPositionChange,
     loading,
     areaId,
     initialOverview,
@@ -82,7 +85,7 @@ export default function ExploreMap({
             container: mapContainer.current,
 
             style:
-                "https://tiles.openfreemap.org/styles/liberty",
+                "https://tiles.openfreemap.org/styles/positron",
 
             // Start with a wider view showing both areas.
             center: [77.632, 12.925],
@@ -337,7 +340,7 @@ export default function ExploreMap({
 
             markersRef.current = [];
 
-            recommendations.forEach((place) => {
+            recommendations.forEach((place, index) => {
                 const element =
                     document.createElement("div");
 
@@ -345,34 +348,138 @@ export default function ExploreMap({
                     place.id === selectedPlaceId;
 
                 // ==================================================
-                // MARKER APPEARANCE
+                // OUTER WRAPPER
+                //
+                // MapLibre owns the outer transform — we never
+                // touch it. All visuals live inside this div.
                 // ==================================================
 
-                element.style.width = isSelected
-                    ? "34px"
-                    : "24px";
-
-                element.style.height = isSelected
-                    ? "34px"
-                    : "24px";
-
-                element.style.borderRadius =
-                    "50%";
-
-                element.style.backgroundColor =
-                    isSelected
-                        ? "#f59e0b"
-                        : "#10b981";
-
-                element.style.border =
-                    "3px solid white";
-
-                element.style.boxShadow =
-                    isSelected
-                        ? "0 0 0 5px rgba(245,158,11,0.25)"
-                        : "0 2px 8px rgba(0,0,0,0.4)";
-
+                element.style.display = "flex";
+                element.style.flexDirection = "column";
+                element.style.alignItems = "center";
                 element.style.cursor = "pointer";
+                element.style.width = isSelected ? "24px" : "auto";
+                element.style.maxWidth = "200px";
+                element.style.fontFamily =
+                    "var(--font-inter), Inter, system-ui, -apple-system, sans-serif";
+
+                if (!isSelected) {
+
+                    // ==================================================
+                    // NAME LABEL
+                    // ==================================================
+
+                    const label = document.createElement("div");
+
+                    label.innerText = place.name;
+
+                    label.style.maxWidth = "200px";
+                    label.style.overflow = "hidden";
+                    label.style.textOverflow = "ellipsis";
+                    label.style.whiteSpace = "nowrap";
+                    label.style.padding = "5px 10px";
+                    label.style.borderRadius = "12px";
+                    label.style.background = "rgba(255,255,255,0.97)";
+                    label.style.border = "1px solid rgba(148,163,184,.28)";
+                    label.style.boxShadow =
+                        "0 2px 8px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06)";
+                    label.style.fontSize = "12.5px";
+                    label.style.fontWeight = "600";
+                    label.style.letterSpacing = "-0.01em";
+                    label.style.color = "#0f172a";
+                    label.style.marginBottom = "4px";
+                    label.style.transition = "border-color 120ms ease, box-shadow 120ms ease";
+
+                    // ==================================================
+                    // AVATAR STRIP
+                    //
+                    // Show up to 3 visitor avatars as a small
+                    // tightly-overlapping strip below the name.
+                    // ==================================================
+
+                    const names = (place.visitors ?? []).slice(0, 3);
+
+                    if (names.length > 0) {
+
+                        const avatars = document.createElement("div");
+
+                        avatars.style.display = "flex";
+                        avatars.style.alignItems = "center";
+                        avatars.style.justifyContent = "center";
+                        avatars.style.marginBottom = "3px";
+
+                        names.forEach((name, i) => {
+                            const img = document.createElement("img");
+                            img.src = `https://api.dicebear.com/9.x/open-peeps/svg?seed=${encodeURIComponent(name)}`;
+                            img.alt = name;
+                            img.title = name;
+                            img.style.width = "24px";
+                            img.style.height = "24px";
+                            img.style.borderRadius = "50%";
+                            img.style.objectFit = "cover";
+                            img.style.background = "#ecfdf5";
+                            img.style.border = "2px solid white";
+                            img.style.marginLeft = i === 0 ? "0" : "-7px";
+                            img.style.boxShadow = "0 1px 3px rgba(15,23,42,.15)";
+                            avatars.appendChild(img);
+                        });
+
+                        element.appendChild(label);
+                        element.appendChild(avatars);
+
+                    } else {
+
+                        element.appendChild(label);
+
+                    }
+
+                }
+
+                // ==================================================
+                // PIN DOT
+                // ==================================================
+
+                const dot = document.createElement("div");
+
+                dot.style.width = isSelected ? "20px" : "14px";
+                dot.style.height = isSelected ? "20px" : "14px";
+                dot.style.borderRadius = "50%";
+                dot.style.background = isSelected ? "#059669" : "#10b981";
+                dot.style.border = isSelected ? "3px solid white" : "2.5px solid white";
+                dot.style.boxShadow = isSelected
+                    ? "0 0 0 4px rgba(5,150,105,.30), 0 3px 10px rgba(5,150,105,.40)"
+                    : "0 0 0 3px rgba(16,185,129,.18), 0 2px 6px rgba(15,23,42,.18)";
+                dot.style.transition = "all 150ms ease";
+
+                element.appendChild(dot);
+
+                // ==================================================
+                // HOVER
+                // ==================================================
+
+                element.onmouseenter = () => {
+                    if (!isSelected) {
+                        const lbl = element.querySelector("div") as HTMLDivElement | null;
+                        if (lbl) {
+                            lbl.style.borderColor = "rgba(16,185,129,.60)";
+                            lbl.style.boxShadow =
+                                "0 2px 10px rgba(16,185,129,.18), 0 1px 2px rgba(15,23,42,.08)";
+                        }
+                        dot.style.background = "#059669";
+                    }
+                };
+
+                element.onmouseleave = () => {
+                    if (!isSelected) {
+                        const lbl = element.querySelector("div") as HTMLDivElement | null;
+                        if (lbl) {
+                            lbl.style.borderColor = "rgba(148,163,184,.28)";
+                            lbl.style.boxShadow =
+                                "0 2px 8px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06)";
+                        }
+                        dot.style.background = "#10b981";
+                    }
+                };
 
                 // ==================================================
                 // MARKER CLICK
@@ -383,23 +490,14 @@ export default function ExploreMap({
                 };
 
                 const marker =
-                    new maplibregl.Marker(element)
+                    new maplibregl.Marker({
+                        element,
+                        anchor: "center",
+                    })
                         .setLngLat([
                             place.longitude,
                             place.latitude,
                         ])
-                        .setPopup(
-                            new maplibregl.Popup({
-                                offset: 15,
-                            }).setText(
-                                `${place.name} — ${place.displayScore ??
-                                Math.min(
-                                    place.score,
-                                    100
-                                )
-                                } match`
-                            )
-                        )
                         .addTo(map);
 
                 markersRef.current.push(marker);
@@ -459,14 +557,42 @@ export default function ExploreMap({
                 place.longitude,
                 place.latitude,
             ],
-            zoom: 16,
-            duration: 800,
+            zoom: 14.8,
+            duration: 900,
+            essential: true,
         });
+
+        const updateSelectedPosition = () => {
+            if (!onSelectedPositionChange) return;
+            const point = map.project([
+                place.longitude,
+                place.latitude,
+            ]);
+            onSelectedPositionChange({ x: point.x, y: point.y });
+        };
+
+        map.once("moveend", updateSelectedPosition);
+        map.on("move", updateSelectedPosition);
+        map.on("resize", updateSelectedPosition);
+
+        return () => {
+            map.off("move", updateSelectedPosition);
+            map.off("resize", updateSelectedPosition);
+            map.off("moveend", updateSelectedPosition);
+        };
     }, [
         selectedPlaceId,
         recommendations,
         initialOverview,
+        onSelectedPositionChange,
     ]);
+
+    // Clear the floating card position when selection closes.
+    useEffect(() => {
+        if (!selectedPlaceId) {
+            onSelectedPositionChange?.(null);
+        }
+    }, [selectedPlaceId, onSelectedPositionChange]);
 
     // ==================================================
     // FIT MAP TO CURRENT AREA
@@ -551,53 +677,6 @@ export default function ExploreMap({
                 ref={mapContainer}
                 className="h-full w-full"
             />
-
-            {/* ==================================================
-                INITIAL AREA OVERVIEW
-            ================================================== */}
-
-            {initialOverview && (
-                <div className="pointer-events-none absolute left-6 top-6 z-10">
-                    <div className="rounded-2xl border border-slate-700 bg-slate-900/90 px-5 py-4 shadow-xl backdrop-blur">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                            Explore
-                        </p>
-
-                        <p className="mt-1 text-lg font-semibold text-white">
-                            Choose an area
-                        </p>
-
-                        <p className="mt-1 text-xs text-slate-400">
-                            Select an area on the map to
-                            discover places.
-                        </p>
-                    </div>
-                </div>
-            )}
-
-            {/* ==================================================
-                LOADING OVERLAY
-            ================================================== */}
-
-            {loading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/70 backdrop-blur-[2px]">
-
-                    <div className="rounded-2xl border border-slate-700 bg-slate-900/95 px-8 py-7 text-center shadow-2xl">
-
-                        <div className="mx-auto mb-4 h-9 w-9 animate-spin rounded-full border-2 border-slate-700 border-t-emerald-400" />
-
-                        <p className="text-sm font-medium text-slate-200">
-                            Updating map
-                        </p>
-
-                        <p className="mt-1 text-xs text-slate-500">
-                            Finding the best places...
-                        </p>
-
-                    </div>
-
-                </div>
-            )}
 
         </div>
     );
