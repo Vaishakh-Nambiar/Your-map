@@ -68,7 +68,7 @@ type PlaceActionState = {
 type GraphNode = {
     id: string;
     label: string;
-    type: "you" | "person" | "place" | "interest";
+    type: "you" | "person" | "place" | "interest" | "verdict";
     relation?: string;
     x: number;
     y: number;
@@ -85,72 +85,104 @@ function NetworkGraph({
     place,
     userName,
     avatarUrl,
+    mode,
+    areaName,
 }: {
     place: Recommendation;
     userName: string;
     avatarUrl: (name: string) => string;
+    mode: "for-you" | "friends" | "discover";
+    areaName?: string;
 }) {
     const visitors = place.visitors ?? [];
     const recommenders = place.recommenders ?? [];
     const people = Array.from(new Set([...visitors, ...recommenders]));
-    const extraNearby = (place.nearbyVisitors ?? []).filter(
+    const nearby = (place.nearbyVisitors ?? []).filter(
         (name) => !people.includes(name)
     );
+    const interest = place.matchedInterests[0] ?? null;
 
-    const interest = place.matchedInterests[0] ?? "Your interests";
-    const peopleColumns = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(Math.max(people.length, 1)))));
-    const peopleRows = Math.max(1, Math.ceil(people.length / peopleColumns));
-    const peopleWidth = 760;
-    const peopleStartX = 500 - peopleWidth / 2;
+    const verdict = (() => {
+        if (mode === "discover") {
+            return people.length || nearby.length
+                ? "Worth discovering"
+                : "New place to explore";
+        }
+        if (mode === "friends") {
+            return people.length
+                ? "Strong social signal"
+                : nearby.length
+                    ? "Friends are active nearby"
+                    : "No friend signal yet";
+        }
+        if (interest && (people.length || nearby.length)) return "Top recommendation for you";
+        if (interest) return "Personal match";
+        if (people.length) return "Top recommendation for you";
+        if (nearby.length) return "Worth exploring";
+        return "New place to discover";
+    })();
+
+    // Keep the graph intentionally small: only relationships that help explain
+    // why this place is being shown. This is an explanation graph, not the DB graph.
+    const visiblePeople = [...people, ...nearby];
+    const columns = Math.min(5, Math.max(1, visiblePeople.length));
+    const rows = Math.max(1, Math.ceil(visiblePeople.length / columns));
+    const xFor = (index: number) =>
+        columns === 1 ? 500 : 140 + (index % columns) * (720 / (columns - 1));
+    const yFor = (index: number) => 150 + Math.floor(index / columns) * 115;
 
     const nodes: GraphNode[] = [
-        { id: "interest", label: interest, type: "interest", x: 500, y: 80 },
-        { id: "place", label: place.name, type: "place", x: 500, y: 340 },
-        { id: "you", label: userName, type: "you", x: 500, y: 620 },
-        ...people.map((name, index) => {
-            const col = index % peopleColumns;
-            const row = Math.floor(index / peopleColumns);
-            const gap = peopleColumns === 1 ? 0 : peopleWidth / (peopleColumns - 1);
-            return {
-                id: `person-${name}`,
-                label: name,
-                type: "person" as const,
-                relation: recommenders.includes(name) ? "RECOMMENDED" : "VISITED",
-                x: peopleColumns === 1 ? 500 : peopleStartX + col * gap,
-                y: 170 + row * 110,
-            };
-        }),
-        ...extraNearby.map((name, index) => ({
-            id: `nearby-${name}`,
+        ...(mode === "for-you" && interest
+            ? [{ id: "interest", label: interest, type: "interest" as const, x: 500, y: 70 }]
+            : []),
+        ...(mode === "discover"
+            ? [{ id: "area", label: areaName ?? "This area", type: "interest" as const, x: 500, y: 70 }]
+            : []),
+        { id: "place", label: place.name, type: "place", x: 500, y: 355 },
+        { id: "verdict", label: verdict, type: "verdict" as const, x: 500, y: 525 },
+        ...(mode === "for-you"
+            ? [{ id: "you", label: userName, type: "you" as const, x: 500, y: 680 }]
+            : []),
+        ...visiblePeople.map((name, index) => ({
+            id: `person-${name}`,
             label: name,
             type: "person" as const,
-            relation: "NEARBY",
-            x: 180 + (index % 4) * 210,
-            y: 690 + Math.floor(index / 4) * 90,
+            relation: recommenders.includes(name)
+                ? visitors.includes(name)
+                    ? "VISITED + RECOMMENDED"
+                    : "RECOMMENDED"
+                : nearby.includes(name)
+                    ? "NEARBY"
+                    : "VISITED",
+            x: xFor(index),
+            y: yFor(index),
         })),
     ];
 
     const edges: GraphEdge[] = [
-        { from: "you", to: "interest", label: "LIKES", tone: "green" },
-        { from: "interest", to: "place", label: "MATCHES", tone: "green" },
-        ...people.map((name) => ({
+        ...(mode === "for-you" && interest
+            ? [
+                { from: "you", to: "interest", label: "likes", tone: "green" as const },
+                { from: "interest", to: "place", label: "matches", tone: "green" as const },
+            ]
+            : []),
+
+        ...(mode === "discover"
+            ? [{ from: "area", to: "place", label: "in this area", tone: "slate" as const }]
+            : []),
+        ...visiblePeople.map((name) => ({
             from: `person-${name}`,
             to: "place",
-            label: recommenders.includes(name) ? "RECOMMENDED" : "VISITED",
+            label: recommenders.includes(name)
+                ? visitors.includes(name)
+                    ? "visited + recommended"
+                    : "recommended"
+                : nearby.includes(name)
+                    ? "nearby"
+                    : "visited",
             tone: recommenders.includes(name) ? "green" as const : "slate" as const,
         })),
-        ...people.map((name) => ({
-            from: "you",
-            to: `person-${name}`,
-            label: "FRIEND",
-            tone: "slate" as const,
-        })),
-        ...extraNearby.map((name) => ({
-            from: `nearby-${name}`,
-            to: "place",
-            label: "NEARBY",
-            tone: "slate" as const,
-        })),
+        { from: "place", to: "verdict", label: "so", tone: "green" as const },
     ];
 
     const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(
@@ -167,11 +199,11 @@ function NetworkGraph({
         setPositions(Object.fromEntries(nodes.map((node) => [node.id, { x: node.x, y: node.y }])));
         setZoom(1);
         setPan({ x: 0, y: 0 });
-    }, [place.id]);
+    }, [place.id, mode]);
 
     const fitView = () => {
-        setZoom(0.82);
-        setPan({ x: 0, y: -20 });
+        setZoom(0.9);
+        setPan({ x: 0, y: 0 });
     };
 
     const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
@@ -222,8 +254,8 @@ function NetworkGraph({
                         return (
                             <g key={`${edge.from}-${edge.to}-${index}`}>
                                 <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={edge.tone === "green" ? "#10b981" : "#94a3b8"} strokeWidth={edge.tone === "green" ? 3 : 2} />
-                                <rect x={mx - 45} y={my - 11} width="90" height="22" rx="11" fill="white" opacity="0.94" />
-                                <text x={mx} y={my + 4} textAnchor="middle" fontSize="9" fontWeight="700" fill={edge.tone === "green" ? "#047857" : "#64748b"}>{edge.label}</text>
+                                <rect x={mx - 48} y={my - 10} width="96" height="20" rx="10" fill="white" opacity="0.94" />
+                                <text x={mx} y={my + 3.5} textAnchor="middle" fontSize="8.5" fontWeight="700" fill={edge.tone === "green" ? "#047857" : "#64748b"}>{edge.label}</text>
                             </g>
                         );
                     })}
@@ -257,11 +289,14 @@ function NetworkGraph({
                             onPointerUp={() => setDragging(null)}
                         >
                             {node.type === "interest" ? (
-                                <div className="flex flex-col items-center">
-                                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-center shadow-sm">
-                                        <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">YOUR INTEREST</p>
-                                        <p className="mt-0.5 text-sm font-bold text-slate-900">☕ {node.label}</p>
-                                    </div>
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-center shadow-sm">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">{mode === "discover" ? "AREA" : "YOUR INTEREST"}</p>
+                                    <p className="mt-0.5 text-sm font-bold text-slate-900">{mode === "discover" ? "📍" : "☕"} {node.label}</p>
+                                </div>
+                            ) : node.type === "verdict" ? (
+                                <div className="rounded-2xl border-2 border-emerald-400 bg-emerald-50 px-6 py-3 text-center shadow-lg">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">WHY THIS SHOWS UP</p>
+                                    <p className="mt-1 max-w-[220px] text-sm font-bold text-emerald-900">{node.label}</p>
                                 </div>
                             ) : isPlace ? (
                                 <div className="rounded-2xl border-2 border-emerald-400 bg-white px-6 py-4 text-center shadow-xl">
@@ -278,7 +313,7 @@ function NetworkGraph({
                                 <div className="flex flex-col items-center">
                                     <img src={avatarUrl(node.label)} alt={node.label} className="h-14 w-14 rounded-full border-2 border-white bg-white object-cover shadow-lg" />
                                     <p className="mt-1 text-xs font-semibold text-slate-800">{node.label}</p>
-                                    <p className="text-[9px] font-semibold text-slate-400">{node.relation}</p>
+                                    <p className="max-w-[120px] text-center text-[9px] font-semibold text-slate-400">{node.relation}</p>
                                 </div>
                             )}
                         </div>
@@ -692,6 +727,96 @@ export default function ExplorePage() {
 
     const selectedVisitors = selectedPlace?.visitors ?? [];
 
+    const getStory = (place: Recommendation) => {
+        const interest = place.matchedInterests?.[0] ?? null;
+        const visitors = place.visitors ?? [];
+        const recommenders = place.recommenders ?? [];
+        const nearby = place.nearbyVisitors ?? [];
+        const socialPeople = Array.from(
+            new Set([...visitors, ...recommenders])
+        );
+
+        const onlyVisited = visitors.filter(
+            (name) => !recommenders.includes(name)
+        );
+        const onlyRecommended = recommenders.filter(
+            (name) => !visitors.includes(name)
+        );
+        const both = recommenders.filter((name) =>
+            visitors.includes(name)
+        );
+
+        const joinNames = (names: string[]) => {
+            if (names.length === 0) return "";
+            if (names.length === 1) return names[0];
+            if (names.length === 2) return `${names[0]} and ${names[1]}`;
+            return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+        };
+
+        if (mode === "discover") {
+            return {
+                kind: "discover" as const,
+                interest,
+                socialPeople,
+                nearby,
+                conclusion: nearby.length
+                    ? `${nearby.length} friend${nearby.length === 1 ? " is" : "s are"} active nearby`
+                    : "A new place to explore",
+                detail: nearby.length
+                    ? `${joinNames(nearby.slice(0, 3))} ${nearby.length === 1 ? "is" : "are"} active nearby.`
+                    : `New place in ${currentArea?.name ?? "this area"}.`,
+            };
+        }
+
+        if (mode === "friends") {
+            return {
+                kind: "friends" as const,
+                interest,
+                socialPeople,
+                nearby,
+                conclusion: socialPeople.length
+                    ? "Your friends are into this"
+                    : nearby.length
+                        ? "Friends are active nearby"
+                        : "No friend activity yet",
+                detail: both.length || onlyRecommended.length || onlyVisited.length
+                    ? [
+                        both.length ? `${joinNames(both)} visited + recommended` : "",
+                        onlyRecommended.length ? `${joinNames(onlyRecommended)} recommended` : "",
+                        onlyVisited.length ? `${joinNames(onlyVisited)} visited` : "",
+                    ].filter(Boolean).join(" · ")
+                    : nearby.length
+                        ? `${joinNames(nearby.slice(0, 3))} active nearby.`
+                        : "",
+            };
+        }
+
+        return {
+            kind: "for-you" as const,
+            interest,
+            socialPeople,
+            nearby,
+            conclusion: interest && socialPeople.length
+                ? "Strong match for you"
+                : interest
+                    ? "Matches what you like"
+                    : socialPeople.length
+                        ? "Your network is into this"
+                        : nearby.length
+                            ? "Worth exploring"
+                            : "A new place to discover",
+            detail: [
+                interest ? `You like ${interest}` : "",
+                both.length ? `${joinNames(both)} visited + recommended` : "",
+                onlyRecommended.length ? `${joinNames(onlyRecommended)} recommended` : "",
+                onlyVisited.length ? `${joinNames(onlyVisited)} visited` : "",
+                !interest && !socialPeople.length && nearby.length
+                    ? `${joinNames(nearby.slice(0, 3))} active nearby`
+                    : "",
+            ].filter(Boolean).join(" · ")
+        };
+    };
+
     return (
         <main className="relative h-screen overflow-hidden bg-[#eef1ed] text-slate-900">
             {/* Full-screen map */}
@@ -890,41 +1015,61 @@ export default function ExplorePage() {
                     </div>
 
                     <div className="mt-4 flex items-center justify-between rounded-2xl bg-emerald-50 px-3 py-2.5">
-                        <span className="text-sm font-medium text-slate-600">
-                            Match
-                        </span>
+                        <span className="text-sm font-medium text-slate-600">Match</span>
                         <span className="text-base font-bold text-emerald-700">
-                            {selectedPlace.displayScore ??
-                                Math.min(selectedPlace.score, 100)}%
+                            {selectedPlace.displayScore ?? Math.min(selectedPlace.score, 100)}%
                         </span>
                     </div>
 
-                    <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
-                        <p className="text-xs font-semibold text-emerald-800">Why you are seeing this</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-600">Your interests and social graph make this place relevant to you.</p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                            {selectedPlace.matchedInterests.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">☕ Interest</span>}
-                            {selectedVisitors.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">👥 {selectedVisitors.length} friend{selectedVisitors.length === 1 ? "" : "s"}</span>}
-                            {selectedPlace.recommenders.length > 0 && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">↗ Recommendation</span>}
-                        </div>
-                    </div>
+                    {(() => {
+                        const story = getStory(selectedPlace);
+                        const storyPeople = story.socialPeople.slice(0, 5);
 
-                    <div className="mt-5">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                            Why this place?
-                        </p>
-                        <div className="mt-2.5 space-y-2">
-                            {selectedPlace.reasons.slice(0, 3).map((reason) => (
-                                <p key={reason} className="text-sm leading-5 text-slate-700">
-                                    <span className="mr-2 text-emerald-500">✓</span>
-                                    {reason}
-                                </p>
-                            ))}
-                        </div>
-                    </div>
+                        return (
+                            <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-3 shadow-sm">
+                                <div className="flex items-center justify-center gap-2 text-sm font-semibold text-slate-800">
+                                    {story.interest && story.kind === "for-you" && (
+                                        <span className="rounded-xl bg-emerald-50 px-2.5 py-1.5">☕ {story.interest}</span>
+                                    )}
+                                    {story.interest && story.kind === "for-you" && storyPeople.length > 0 && (
+                                        <span className="text-slate-300">+</span>
+                                    )}
+                                    {storyPeople.length > 0 && (
+                                        <div className="flex -space-x-2">
+                                            {storyPeople.map((name) => (
+                                                <img
+                                                    key={name}
+                                                    src={avatarUrl(name)}
+                                                    alt={name}
+                                                    title={name}
+                                                    className="h-9 w-9 rounded-full border-2 border-white bg-emerald-50 object-cover shadow-sm"
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                    {story.kind === "discover" && !storyPeople.length && (
+                                        <span className="rounded-xl bg-slate-50 px-3 py-1.5">📍 {currentArea?.name ?? "This area"}</span>
+                                    )}
+                                </div>
+
+                                {story.detail && (
+                                    <p className="mt-2 text-center text-xs leading-5 text-slate-500">
+                                        {story.detail}
+                                    </p>
+                                )}
+
+                                <div className="my-2 flex justify-center text-emerald-500">↓</div>
+
+                                <div className="rounded-xl bg-emerald-50 px-3 py-2 text-center">
+                                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-600">So...</p>
+                                    <p className="mt-0.5 text-sm font-bold text-emerald-900">{story.conclusion}</p>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {selectedVisitors.length > 0 && (
-                        <div className="mt-4 flex items-center gap-2">
+                        <div className="mt-3 flex items-center justify-center gap-2">
                             <div className="flex -space-x-2">
                                 {selectedVisitors.slice(0, 4).map((name) => (
                                     <img
@@ -932,11 +1077,11 @@ export default function ExplorePage() {
                                         src={avatarUrl(name)}
                                         alt={name}
                                         title={name}
-                                        className="h-8 w-8 rounded-full border-2 border-white bg-emerald-50 object-cover"
+                                        className="h-7 w-7 rounded-full border-2 border-white bg-emerald-50 object-cover"
                                     />
                                 ))}
                             </div>
-                            <span className="text-xs text-slate-500">
+                            <span className="text-[11px] text-slate-500">
                                 {selectedVisitors.length} friend{selectedVisitors.length === 1 ? "" : "s"} visited
                             </span>
                         </div>
@@ -1061,53 +1206,67 @@ export default function ExplorePage() {
                             </div>
                         ) : (
                             <div className="h-[calc(100%-72px)] space-y-2 overflow-y-auto px-3 pb-3">
-                                {visibleRecommendations.map(
-                                    (item) => {
-                                        const score =
-                                            item.displayScore ??
-                                            Math.min(
-                                                item.score,
-                                                100
-                                            );
+                                {visibleRecommendations.map((item) => {
+                                    const score =
+                                        item.displayScore ??
+                                        Math.min(item.score, 100);
+                                    const story = getStory(item);
+                                    const storyPeople = story.socialPeople.slice(0, 4);
 
-                                        return (
-                                            <button
-                                                key={item.id}
-                                                onClick={() =>
-                                                    setSelectedPlaceId(
-                                                        item.id
-                                                    )
-                                                }
-                                                className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
-                                            >
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                        <p className="truncate text-sm font-semibold text-slate-900">
-                                                            {item.name}
-                                                        </p>
-                                                        <p className="mt-0.5 text-xs text-slate-500">
-                                                            ★{" "}
-                                                            {item.rating}
-                                                        </p>
-                                                    </div>
-
-                                                    <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                                                        {score}% match
-                                                    </span>
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => setSelectedPlaceId(item.id)}
+                                            className="w-full rounded-2xl border border-slate-100 bg-white p-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/40"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="truncate text-sm font-semibold text-slate-900">
+                                                        {item.name}
+                                                    </p>
+                                                    <p className="mt-0.5 text-xs text-slate-500">★ {item.rating}</p>
                                                 </div>
+                                                <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                                                    {score}% match
+                                                </span>
+                                            </div>
 
-                                                {item.reasons[0] && (
-                                                    <p className="mt-2 truncate text-xs text-slate-500">
-                                                        <span className="mr-1 text-emerald-500">
-                                                            ✓
-                                                        </span>
-                                                        {item.reasons[0]}
+                                            <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                                                <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-700">
+                                                    {story.interest && story.kind === "for-you" && (
+                                                        <span className="rounded-full bg-white px-2 py-1">☕ {story.interest}</span>
+                                                    )}
+                                                    {storyPeople.length > 0 && (
+                                                        <div className="flex -space-x-2">
+                                                            {storyPeople.map((name) => (
+                                                                <img
+                                                                    key={name}
+                                                                    src={avatarUrl(name)}
+                                                                    alt={name}
+                                                                    title={name}
+                                                                    className="h-7 w-7 rounded-full border-2 border-white bg-emerald-50 object-cover"
+                                                                />
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {story.nearby.length > 0 && !storyPeople.length && (
+                                                        <span className="rounded-full bg-white px-2 py-1">📍 {story.nearby.length} nearby</span>
+                                                    )}
+                                                </div>
+                                                {story.detail && (
+                                                    <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-slate-500">
+                                                        {story.detail}
                                                     </p>
                                                 )}
-                                            </button>
-                                        );
-                                    }
-                                )}
+                                            </div>
+
+                                            <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                                                <span>→</span>
+                                                <span>{story.conclusion}</span>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -1144,52 +1303,99 @@ export default function ExplorePage() {
             )}
 
             {/* How recommendation works */}
-            {showHow && selectedPlace && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 backdrop-blur-[3px]">
-                    <div className="w-[min(620px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">Recommendation logic</p>
-                                <h3 className="mt-1 text-2xl font-semibold tracking-tight">Why {selectedPlace.name}?</h3>
-                                <p className="mt-1 text-sm text-slate-500">A simple view of how your preferences and graph relationships make a place relevant.</p>
-                            </div>
-                            <button onClick={() => setShowHow(false)} className="rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50">×</button>
-                        </div>
+            {showHow && selectedPlace && (() => {
+                const visitors = selectedPlace.visitors ?? [];
+                const recommenders = selectedPlace.recommenders ?? [];
+                const nearby = selectedPlace.nearbyVisitors ?? [];
+                const interest = selectedPlace.matchedInterests[0] ?? null;
+                const both = recommenders.filter((name) => visitors.includes(name));
+                const onlyRecommended = recommenders.filter((name) => !visitors.includes(name));
+                const onlyVisited = visitors.filter((name) => !recommenders.includes(name));
 
-                        <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
-                            <p className="text-sm font-bold text-slate-900">The recommendation starts with you</p>
-                            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold">
-                                <span className="rounded-xl bg-white px-3 py-2 shadow-sm">{userName}</span>
-                                <span className="text-slate-400">→</span>
-                                <span className="rounded-xl bg-emerald-100 px-3 py-2 text-emerald-800">☕ {selectedPlace.matchedInterests[0] ?? "your interests"}</span>
-                                <span className="text-slate-400">→</span>
-                                <span className="rounded-xl border border-emerald-200 bg-white px-3 py-2">{selectedPlace.name}</span>
-                            </div>
-                            <p className="mt-3 text-xs leading-5 text-slate-600">Then Explore adds context from your social graph — friends who visited or recommended the place, and nearby activity when available.</p>
-                        </div>
+                const joinNames = (names: string[]) => {
+                    if (names.length === 0) return "";
+                    if (names.length === 1) return names[0];
+                    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+                    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+                };
 
-                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                            <div className="rounded-2xl bg-white border border-slate-200 p-3">
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">1 · Personal fit</p>
-                                <p className="mt-1 text-sm font-semibold text-slate-900">You like {selectedPlace.matchedInterests[0] ?? "this category"}</p>
-                            </div>
-                            <div className="rounded-2xl bg-white border border-slate-200 p-3">
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">2 · Network evidence</p>
-                                <p className="mt-1 text-sm font-semibold text-slate-900">{selectedVisitors.length || selectedPlace.recommenders.length ? `${selectedVisitors.length + selectedPlace.recommenders.length} social signal${selectedVisitors.length + selectedPlace.recommenders.length === 1 ? "" : "s"}` : "No social signal yet"}</p>
-                            </div>
-                            <div className="rounded-2xl bg-emerald-50 p-3">
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">3 · Combined</p>
-                                <p className="mt-1 text-sm font-semibold text-emerald-800">More relevant signals → stronger recommendation</p>
-                            </div>
-                        </div>
+                const socialParts: string[] = [];
+                if (both.length) socialParts.push(`${joinNames(both)} ${both.length === 1 ? "visited and recommended" : "visited and recommended"} it`);
+                if (onlyRecommended.length) socialParts.push(`${joinNames(onlyRecommended)} ${onlyRecommended.length === 1 ? "recommended" : "recommended"} it`);
+                if (onlyVisited.length) socialParts.push(`${joinNames(onlyVisited)} ${onlyVisited.length === 1 ? "visited" : "visited"} it`);
 
-                        <div className="mt-4 rounded-2xl border border-slate-200 p-4">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">In 5 seconds</p>
-                            <p className="mt-1 text-sm leading-6 text-slate-700">You like something → the graph checks what your network does around places → relevant signals are combined → the place is ranked for you.</p>
+                const socialSentence = socialParts.join(". ");
+                const hasSignals = Boolean(interest || socialParts.length || nearby.length);
+
+                let simpleExplanation: string;
+                let conclusion: string;
+
+                if (mode === "discover") {
+                    simpleExplanation = nearby.length
+                        ? `This place is in ${currentArea?.name ?? "the area"}. ${nearby.length} friend${nearby.length === 1 ? " is" : "s are"} active nearby.`
+                        : `This place is in ${currentArea?.name ?? "the area"}. There are no personal or social signals needed to discover it.`;
+                    conclusion = nearby.length ? "Worth discovering" : "New place to explore";
+                } else if (mode === "friends") {
+                    simpleExplanation = socialSentence
+                        ? `${socialSentence}.`
+                        : nearby.length
+                            ? `${joinNames(nearby)} ${nearby.length === 1 ? "is" : "are"} active nearby.`
+                            : "No friend has interacted with this place yet.";
+                    conclusion = socialParts.length || nearby.length ? "A strong social recommendation" : "No friend signal yet";
+                } else if (interest && socialSentence) {
+                    simpleExplanation = `${userName} likes ${interest}. ${socialSentence}.`;
+                    conclusion = "That makes this one of the top recommendations for you.";
+                } else if (interest) {
+                    simpleExplanation = `${userName} likes ${interest}, and this place matches that interest.`;
+                    conclusion = "A personal match for you.";
+                } else if (socialSentence) {
+                    simpleExplanation = `${socialSentence}.`;
+                    conclusion = "That makes this a strong social recommendation.";
+                } else if (nearby.length) {
+                    simpleExplanation = `${joinNames(nearby)} ${nearby.length === 1 ? "is" : "are"} active nearby.`;
+                    conclusion = "Worth exploring.";
+                } else {
+                    simpleExplanation = "No personal or social signal is available yet.";
+                    conclusion = "A new place to discover.";
+                }
+
+                return (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/25 p-4 backdrop-blur-[3px]">
+                        <div className="w-[min(650px,calc(100vw-2rem))] rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">Recommendation logic · {mode === "for-you" ? "For You" : mode === "friends" ? "Friends" : "Discover"}</p>
+                                    <h3 className="mt-1 text-2xl font-semibold tracking-tight">Why {selectedPlace.name}?</h3>
+                                </div>
+                                <button onClick={() => setShowHow(false)} className="rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50">×</button>
+                            </div>
+
+                            <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">In simple terms</p>
+                                <p className="mt-3 text-lg font-medium leading-8 text-slate-900">{simpleExplanation}</p>
+                            </div>
+
+                            <div className="mt-4 flex flex-col items-center gap-2 text-center">
+                                <div className="h-5 w-px bg-slate-300" />
+                                <div className="rounded-2xl border-2 border-emerald-400 bg-emerald-50 px-6 py-4">
+                                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-600">SO...</p>
+                                    <p className="mt-1 text-lg font-bold text-emerald-900">{conclusion}</p>
+                                </div>
+                            </div>
+
+                            {hasSignals && (
+                                <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs font-semibold">
+                                    {interest && mode === "for-you" && <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-800">☕ {interest}</span>}
+                                    {onlyVisited.length > 0 && <span className="rounded-full bg-slate-100 px-3 py-2 text-slate-700">👤 {onlyVisited.length} visited</span>}
+                                    {onlyRecommended.length > 0 && <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-800">↗ {onlyRecommended.length} recommended</span>}
+                                    {both.length > 0 && <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-800">↗ {both.length} visited + recommended</span>}
+                                    {nearby.length > 0 && <span className="rounded-full bg-slate-100 px-3 py-2 text-slate-700">📍 {nearby.length} nearby</span>}
+                                </div>
+                            )}
                         </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Interactive graph story */}
             {showNetwork && selectedPlace && (
@@ -1199,16 +1405,17 @@ export default function ExplorePage() {
                             <div>
                                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">Graph connections</p>
                                 <h3 className="mt-1 text-xl font-semibold">Why {userName} sees {selectedPlace.name}</h3>
-                                <p className="mt-1 text-sm text-slate-500">Read this left-to-right: your interest makes the place relevant, then your social graph adds evidence from friends.</p>
+                                <p className="mt-1 text-sm text-slate-500">Only the relationships that help explain this recommendation are shown.</p>
                             </div>
                             <button onClick={() => setShowNetwork(false)} className="shrink-0 rounded-full border border-slate-200 px-2 py-1 text-slate-400 hover:bg-slate-50">×</button>
                         </div>
-                        <NetworkGraph place={selectedPlace} userName={userName} avatarUrl={avatarUrl} />
-                        <div className="mt-4 grid gap-2 text-center text-xs sm:grid-cols-4">
-                            <div className="rounded-2xl bg-slate-50 p-3"><b>LIKES / MATCHES</b><p className="mt-1 text-slate-500">personal relevance</p></div>
-                            <div className="rounded-2xl bg-slate-50 p-3"><b>FRIEND</b><p className="mt-1 text-slate-500">social relationship</p></div>
-                            <div className="rounded-2xl bg-slate-50 p-3"><b>VISITED</b><p className="mt-1 text-slate-500">place activity</p></div>
-                            <div className="rounded-2xl bg-emerald-50 p-3"><b>RECOMMENDED</b><p className="mt-1 text-slate-500">new graph signal</p></div>
+                        <NetworkGraph place={selectedPlace} userName={userName} avatarUrl={avatarUrl} mode={mode} areaName={currentArea?.name} />
+                        <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-center text-sm font-medium text-emerald-900">
+                            {mode === "for-you"
+                                ? "Your interests + what your friends do around places → a recommendation for you."
+                                : mode === "friends"
+                                    ? "What your friends visited or recommended → social recommendations."
+                                    : "Places in the area → discover new places, with social context when available."}
                         </div>
                     </div>
                 </div>
