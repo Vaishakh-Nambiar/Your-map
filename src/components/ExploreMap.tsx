@@ -340,75 +340,146 @@ export default function ExploreMap({
 
             markersRef.current = [];
 
-            recommendations.forEach((place) => {
+            recommendations.forEach((place, index) => {
                 const element =
                     document.createElement("div");
 
                 const isSelected =
                     place.id === selectedPlaceId;
 
-                // MapLibre owns the outer element's transform.
-                // Keep the visual UI inside it.
-                element.style.width = isSelected ? "30px" : "190px";
-                element.style.height = isSelected ? "30px" : "78px";
+                // ==================================================
+                // OUTER WRAPPER
+                //
+                // MapLibre owns the outer transform — we never
+                // touch it. All visuals live inside this div.
+                // ==================================================
+
                 element.style.display = "flex";
                 element.style.flexDirection = "column";
                 element.style.alignItems = "center";
                 element.style.cursor = "pointer";
-
-                const label = document.createElement("div");
-                label.innerText = place.name;
-                label.style.maxWidth = "190px";
-                label.style.overflow = "hidden";
-                label.style.textOverflow = "ellipsis";
-                label.style.whiteSpace = "nowrap";
-                label.style.padding = "7px 11px";
-                label.style.borderRadius = "10px";
-                label.style.background = "rgba(255,255,255,0.96)";
-                label.style.border = isSelected ? "1.5px solid #10b981" : "1px solid rgba(148,163,184,.35)";
-                label.style.boxShadow = "0 3px 10px rgba(15,23,42,.14)";
-                label.style.fontSize = isSelected ? "12px" : "13px";
-                label.style.fontWeight = "600";
-                label.style.color = "#0f172a";
-                label.style.marginBottom = "4px";
-
-                const avatars = document.createElement("div");
-                avatars.style.display = "flex";
-                avatars.style.alignItems = "center";
-                avatars.style.justifyContent = "center";
-                avatars.style.marginBottom = "2px";
-
-                const names = (place.visitors ?? []).slice(0, 3);
-                names.forEach((name, index) => {
-                    const img = document.createElement("img");
-                    img.src = `https://api.dicebear.com/9.x/open-peeps/svg?seed=${encodeURIComponent(name)}`;
-                    img.alt = name;
-                    img.title = name;
-                    img.style.width = "27px";
-                    img.style.height = "27px";
-                    img.style.borderRadius = "50%";
-                    img.style.objectFit = "cover";
-                    img.style.background = "#ecfdf5";
-                    img.style.border = "2px solid white";
-                    img.style.marginLeft = index === 0 ? "0" : "-8px";
-                    avatars.appendChild(img);
-                });
-
-                const dot = document.createElement("div");
-                dot.style.width = isSelected ? "22px" : "18px";
-                dot.style.height = isSelected ? "22px" : "18px";
-                dot.style.borderRadius = "50%";
-                dot.style.background = isSelected ? "#0f172a" : "#059669";
-                dot.style.border = "3px solid white";
-                dot.style.boxShadow = isSelected
-                    ? "0 0 0 5px rgba(15,23,42,.12), 0 3px 10px rgba(15,23,42,.28)"
-                    : "0 0 0 4px rgba(5,150,105,.18), 0 3px 9px rgba(15,23,42,.20)";
+                element.style.width = isSelected ? "24px" : "auto";
+                element.style.maxWidth = "200px";
+                element.style.fontFamily =
+                    "var(--font-inter), Inter, system-ui, -apple-system, sans-serif";
 
                 if (!isSelected) {
-                    element.appendChild(label);
-                    if (names.length > 0) element.appendChild(avatars);
+
+                    // ==================================================
+                    // NAME LABEL
+                    // ==================================================
+
+                    const label = document.createElement("div");
+
+                    label.innerText = place.name;
+
+                    label.style.maxWidth = "200px";
+                    label.style.overflow = "hidden";
+                    label.style.textOverflow = "ellipsis";
+                    label.style.whiteSpace = "nowrap";
+                    label.style.padding = "5px 10px";
+                    label.style.borderRadius = "12px";
+                    label.style.background = "rgba(255,255,255,0.97)";
+                    label.style.border = "1px solid rgba(148,163,184,.28)";
+                    label.style.boxShadow =
+                        "0 2px 8px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06)";
+                    label.style.fontSize = "12.5px";
+                    label.style.fontWeight = "600";
+                    label.style.letterSpacing = "-0.01em";
+                    label.style.color = "#0f172a";
+                    label.style.marginBottom = "4px";
+                    label.style.transition = "border-color 120ms ease, box-shadow 120ms ease";
+
+                    // ==================================================
+                    // AVATAR STRIP
+                    //
+                    // Show up to 3 visitor avatars as a small
+                    // tightly-overlapping strip below the name.
+                    // ==================================================
+
+                    const names = (place.visitors ?? []).slice(0, 3);
+
+                    if (names.length > 0) {
+
+                        const avatars = document.createElement("div");
+
+                        avatars.style.display = "flex";
+                        avatars.style.alignItems = "center";
+                        avatars.style.justifyContent = "center";
+                        avatars.style.marginBottom = "3px";
+
+                        names.forEach((name, i) => {
+                            const img = document.createElement("img");
+                            img.src = `https://api.dicebear.com/9.x/open-peeps/svg?seed=${encodeURIComponent(name)}`;
+                            img.alt = name;
+                            img.title = name;
+                            img.style.width = "24px";
+                            img.style.height = "24px";
+                            img.style.borderRadius = "50%";
+                            img.style.objectFit = "cover";
+                            img.style.background = "#ecfdf5";
+                            img.style.border = "2px solid white";
+                            img.style.marginLeft = i === 0 ? "0" : "-7px";
+                            img.style.boxShadow = "0 1px 3px rgba(15,23,42,.15)";
+                            avatars.appendChild(img);
+                        });
+
+                        element.appendChild(label);
+                        element.appendChild(avatars);
+
+                    } else {
+
+                        element.appendChild(label);
+
+                    }
+
                 }
+
+                // ==================================================
+                // PIN DOT
+                // ==================================================
+
+                const dot = document.createElement("div");
+
+                dot.style.width = isSelected ? "20px" : "14px";
+                dot.style.height = isSelected ? "20px" : "14px";
+                dot.style.borderRadius = "50%";
+                dot.style.background = isSelected ? "#059669" : "#10b981";
+                dot.style.border = isSelected ? "3px solid white" : "2.5px solid white";
+                dot.style.boxShadow = isSelected
+                    ? "0 0 0 4px rgba(5,150,105,.30), 0 3px 10px rgba(5,150,105,.40)"
+                    : "0 0 0 3px rgba(16,185,129,.18), 0 2px 6px rgba(15,23,42,.18)";
+                dot.style.transition = "all 150ms ease";
+
                 element.appendChild(dot);
+
+                // ==================================================
+                // HOVER
+                // ==================================================
+
+                element.onmouseenter = () => {
+                    if (!isSelected) {
+                        const lbl = element.querySelector("div") as HTMLDivElement | null;
+                        if (lbl) {
+                            lbl.style.borderColor = "rgba(16,185,129,.60)";
+                            lbl.style.boxShadow =
+                                "0 2px 10px rgba(16,185,129,.18), 0 1px 2px rgba(15,23,42,.08)";
+                        }
+                        dot.style.background = "#059669";
+                    }
+                };
+
+                element.onmouseleave = () => {
+                    if (!isSelected) {
+                        const lbl = element.querySelector("div") as HTMLDivElement | null;
+                        if (lbl) {
+                            lbl.style.borderColor = "rgba(148,163,184,.28)";
+                            lbl.style.boxShadow =
+                                "0 2px 8px rgba(15,23,42,.10), 0 1px 2px rgba(15,23,42,.06)";
+                        }
+                        dot.style.background = "#10b981";
+                    }
+                };
 
                 // ==================================================
                 // MARKER CLICK
