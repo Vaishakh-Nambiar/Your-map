@@ -2,7 +2,8 @@
 
 > A map-first place discovery app where your social graph and interests drive every recommendation.
 
-**Live demo:** [https://your-map.vercel.app/login](https://your-map.vercel.app/login)
+**Live demo:** [https://your-map.vercel.app/login](https://your-map.vercel.app/login)  
+**Demo video:** [Watch Screen Recording / Video Walkthrough](https://drive.google.com/file/d/19j8cKyIMg9eJzpjmQMMBo1PHcSjBg2vR/view?usp=sharing)
 
 ---
 
@@ -569,7 +570,7 @@ The Wexa AI assignment specifies explicit requirements. This table maps each one
 | Multi-hop Cypher (2+ hops required) | Multiple multi-hop traversals including User → Friend → Place → Area → Nearby Area |
 | Parameterized queries, no string concatenation | `$userId`, `$areaId` parameters; no template literal Cypher |
 | Environment-based credentials | `COGNO_DB_URI`, `COGNO_DB_USERNAME`, `COGNO_DB_PWD` — never in browser |
-| Working hosted application | _[Live Demo Link](https://your-map.vercel.app/login)_ |
+| Working hosted application & screen recording | _[Live Demo Link](https://your-map.vercel.app/login)_ · _[Video Walkthrough](https://drive.google.com/file/d/19j8cKyIMg9eJzpjmQMMBo1PHcSjBg2vR/view?usp=sharing)_ |
 | Source code in repository | Full source — queries, scoring, seed scripts, all included |
 | Data-loading scripts | `scripts/seed-social.ts`, `scripts/ingest-osm.ts` |
 | README with setup/run instructions | This document |
