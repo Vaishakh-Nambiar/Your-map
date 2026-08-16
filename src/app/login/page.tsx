@@ -82,7 +82,7 @@ export default function LoginPage() {
 
                     <p className="mt-4 text-sm leading-relaxed text-slate-500">
                         Recommendations driven by your social graph —
-                        your interests, your friends' visits, and your neighbourhood, all connected.
+                        your interests, your friends&apos; visits, and your neighbourhood, all connected.
                     </p>
                 </div>
 

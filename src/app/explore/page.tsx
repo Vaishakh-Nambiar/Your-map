@@ -406,6 +406,7 @@ function NetworkGraph({
     });
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPositions(
             Object.fromEntries(
                 nodes.map((node) => [
@@ -1055,11 +1056,7 @@ export default function ExplorePage() {
             router.push("/login");
             return;
         }
-
-        setUserId(
-            storedUserId
-        );
-
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setUserId(
             storedUserId
         );
